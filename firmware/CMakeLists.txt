@@ -18,7 +18,8 @@ set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# rest of your project
+# TODO(aver): add better inclusion of this lib
+add_subdirectory(libs/pico-oled src)
 
 include_directories(
     libs/ael/cpp/includes
@@ -49,6 +50,10 @@ add_link_options(
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    include
 )
 
 target_link_libraries(${PROJECT_NAME}
