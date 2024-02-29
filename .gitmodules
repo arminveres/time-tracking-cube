@@ -7,3 +7,6 @@
 [submodule "firmware/libs/pico-oled"]
 	path = firmware/libs/pico-oled
 	url = git@github.com:arminveres/pico-oled
+[submodule "firmware/libs/ael-cpp"]
+	path = firmware/libs/ael-cpp
+	url = git@github.com:arminveres/ael-cpp

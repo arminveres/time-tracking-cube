@@ -1,19 +1,24 @@
 cmake_minimum_required(VERSION 3.12)
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
-set(PICO_TOOLCHAIN_PATH /opt/gcc-arm-none-eabi/bin)
-# NOTE: this must happen before project()
-include(libs/pico-sdk/pico_sdk_init.cmake)
+include(libs/pico-oled/cmake/pico_sdk_import.cmake)
 
-project(ttc-firmware C CXX ASM)
+# use pico sdk defined in ael
+set(AEL_USE_PICO_SDK true)
+set(AEL_PICO_IMPORT true)
+set(AEL_BOARD pico_w)
+set(AEL_TOOLCHAIN_PATH /opt/gcc-arm-none-eabi/bin)
+
+# add AEL
+add_subdirectory(libs/ael-cpp)
+
+project(ttc-firmware
+    LANGUAGES C CXX ASM
+    VERSION 0.1.0
+)
 
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_CXX_STANDARD 23)
-
-set(CMAKE_CXX_COMPILER /opt/gcc-arm-none-eabi/bin/arm-none-eabi-g++)
-
-set(PICO_BOARD pico_w)
-set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
 
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -21,11 +26,11 @@ pico_sdk_init()
 # TODO(aver): add better inclusion of this lib
 add_subdirectory(libs/pico-oled src)
 
-include_directories(
-    libs/ael/cpp/includes
+add_executable(${PROJECT_NAME}
+    src/main.cpp
 )
 
-add_compile_options(
+target_compile_options(${PROJECT_NAME} PRIVATE
     # -Werror
     -Wall
     -Wextra
@@ -43,20 +48,18 @@ add_compile_options(
     -fdata-sections
 )
 
-add_link_options(
+target_link_options(${PROJECT_NAME} PRIVATE
     -Wl,-gc-sections
     -Wl,-print-memory-usage
-)
-
-add_executable(${PROJECT_NAME}
-    src/main.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     include
 )
 
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    ael_main
+
     pico_stdlib
 )
 
