@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.12)
-set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 include(libs/pico-oled/cmake/pico_sdk_import.cmake)
 
@@ -19,6 +18,7 @@ project(ttc-firmware
 
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -46,6 +46,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -fstack-usage
     -ffunction-sections
     -fdata-sections
+    -fdiagnostics-color
 )
 
 target_link_options(${PROJECT_NAME} PRIVATE
@@ -59,8 +60,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ael_main
+    ael_boards_pi_pico
+    ael_peripherals_lis3dh
 
     pico_stdlib
 )
 
 pico_add_extra_outputs(${PROJECT_NAME})
+pico_enable_stdio_usb(${PROJECT_NAME} 1)
