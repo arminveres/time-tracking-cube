@@ -3,6 +3,7 @@
 #include <pico/stdlib.h>
 #include <pico/time.h>
 
+#include <cstring>
 #include <vector>
 
 #include "ael/boards/pi_pico/extras/lis3dh.hpp"
@@ -26,10 +27,26 @@ enum class eSides {
     eSide6,
 };
 
-struct TimeEntry {
+/**
+ * @brief Struct that holds an entry value for the tasks.
+ * @note Expected size is 7 bytes = 4 + (1 + 1 + 1)
+ */
+struct [[gnu::packed]] TimeEntry {
     eSides side;
     TimeStamp ts;
 };
+
+/**
+ * @brief Serializes a data struct to bytes.
+ * @warn Each call instantiates its own buffer at compiletime, so the code gets larger. Keep in
+ * mind.
+ */
+template <class T>
+auto serialize(const T& entry) -> u8* {
+    static u8 serbuf[sizeof(T)];
+    std::memcpy(serbuf, reinterpret_cast<const u8*>(&entry), sizeof(T));
+    return serbuf;
+}
 
 using TSVec = std::vector<TimeEntry>;
 
@@ -37,13 +54,15 @@ using TSVec = std::vector<TimeEntry>;
     stdio_init_all();
 
     auto spi = SPI(eInstSPI::SPI_0, 17, 18, 19, 16, 1'000'000);
+    // FIXME(aver): set sampling rate as a parameter
     auto accm = LIS3DH(spi);
+
     (void)accm.reg_read(reg_addr::WHO_AM_I);
 
     const auto id = accm.reg_read(reg_addr::WHO_AM_I);
-    if (id == LIS3DH::LIS3DH_ID)
+    if (id == LIS3DH::LIS3DH_ID) {
         printf("SPI address 0x%x\n", id);
-    else {
+    } else {
         printf("ERROR: Expected Address 0x%x\n", reg_addr::WHO_AM_I);
         while (true) {
             sleep_us(10'000);
@@ -64,18 +83,14 @@ using TSVec = std::vector<TimeEntry>;
     auto entries = TSVec();
 
     while (true) {
-        // // Clear terminal
-        // printf("\e[1;1H\e[2J");
-
-        // reg_status status;
-
+        // skip if we don't have new data
         if (const auto status = accm.reg_read(reg_status::ADDR); not(status & 0x0Fu)) {
-            printf("Status: 0b%08b\n", status);
+            // printf("Status: 0b%08b\n", status);
             continue;
         }
 
         const auto accel = accm.read_accel();
-        printf("CON: x: %03d, y: %03d, z: %03d\n", accel.x, accel.y, accel.z);
+        // printf("CON: x: %03d, y: %03d, z: %03d\n", accel.x, accel.y, accel.z);
 
         if (accel.z > ths) {
             new_side = eSides::eSide1;
@@ -102,21 +117,36 @@ using TSVec = std::vector<TimeEntry>;
             // printf("on long edge, side 6\n");
         }
 
-        if (old_side != new_side) {
-            printf("\e[1;1H\e[2J");
-
-            const auto entry = TimeEntry{.side = new_side, .ts = timer1.stop_with_triple()};
-            entries.emplace_back(entry);
-            printf("Time spent on side %d: [ %02llu:%02llu:%02llu ]\n",
-                   static_cast<int>(old_side),
-                   std::get<0>(entry.ts),
-                   std::get<1>(entry.ts),
-                   std::get<2>(entry.ts));
-            printf("Changed side to: %d\n", static_cast<int>(new_side));
-            old_side = new_side;
-            timer1.start();
+        // Put entry
+        if (old_side == new_side) {
+            continue;
+        }
+        // 15 seconds is the least we expect on a task
+        if (auto timestamp = timer1.get_now_triple(); std::get<2>(timestamp) < 15) {
+            printf("%d\n", std::get<2>(timestamp));
+            continue;
         }
 
-        sleep_ms(100);
+        printf("\e[1;1H\e[2J");
+
+        const auto entry = TimeEntry{
+            .side = new_side,
+            .ts = timer1.stop_with_triple(),
+        };
+
+        entries.emplace_back(entry);
+
+        printf("Time spent on side %d: [ %02d:%02d:%02d ]\n",
+               static_cast<int>(old_side),
+               std::get<0>(entry.ts),
+               std::get<1>(entry.ts),
+               std::get<2>(entry.ts));
+        printf("Changed side to: %d\n", static_cast<int>(new_side));
+
+        old_side = new_side;
+        timer1.start();
+
+        // FIXME(aver): sleep should be adjusted to the sampling rate of lis3dh
+        // sleep_ms(100);
     }
 }
