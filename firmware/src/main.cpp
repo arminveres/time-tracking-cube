@@ -122,8 +122,8 @@ using TSVec = std::vector<TimeEntry>;
             continue;
         }
         // 15 seconds is the least we expect on a task
-        if (auto timestamp = timer1.get_now_triple(); std::get<2>(timestamp) < 15) {
-            printf("%d\n", std::get<2>(timestamp));
+        if (auto timestamp = timer1.get_now_triple(); timestamp.seconds < 15) {
+            printf("%d\n", timestamp.seconds);
             continue;
         }
 
@@ -138,9 +138,9 @@ using TSVec = std::vector<TimeEntry>;
 
         printf("Time spent on side %d: [ %02d:%02d:%02d ]\n",
                static_cast<int>(old_side),
-               std::get<0>(entry.ts),
-               std::get<1>(entry.ts),
-               std::get<2>(entry.ts));
+               entry.ts.hours,
+               entry.ts.minutes,
+               entry.ts.seconds);
         printf("Changed side to: %d\n", static_cast<int>(new_side));
 
         old_side = new_side;
