@@ -4,25 +4,34 @@
 #include <pico/stdlib.h>
 #include <pico/time.h>
 
+#include <array>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
-#include "ael/boards/pi_pico/extras/lis3dh.hpp"
+#include "ael/boards/pi_pico/extras/adxl345.hpp"
 #include "ael/boards/pi_pico/spi.hpp"
 #include "ael/boards/pi_pico/timer.hpp"
-#include "ael/peripherals/lis3dh/registers.hpp"
+#include "ael/peripherals/adxl345/registers.hpp"
 #include "ael/types.hpp"
+#include "pico-oled/display.hpp"
+#include "pico-oled/fonts.hpp"
+#include "pico-oled/paint.hpp"
+#include "pico-oled/paint_enums.hpp"
 
 using namespace ael::types;
 using namespace ael::boards::pi_pico::timer;
 using namespace ael::boards::pi_pico::spi;
-using namespace ael::boards::pi_pico::extras::lis3dh;
-using namespace ael::peripherals::lis3dh;
+using namespace ael::boards::pi_pico::extras::adxl345;
+using namespace ael::peripherals::adxl345;
 
 constexpr u32 RESERVED_FLASH_ADDRESS = 0x101FC000;
 constexpr u32 RESERVED_FLASH_SIZE = 0x400;
 [[gnu::section("flx_buf")]] u8* const g_flash_buffer =
     reinterpret_cast<u8*>(RESERVED_FLASH_ADDRESS);
+
+/// @brief Clear terminal output
+[[gnu::always_inline]] static inline auto clear_term() { std::printf("\x1B[1;1H\x1B[2J"); }
 
 enum class eSides : u8 {
     eSide1 = 1,
@@ -38,14 +47,21 @@ enum class eSides : u8 {
  * @note Expected size is 7 bytes = 4 + (1 + 1 + 1)
  */
 struct [[gnu::packed]] TimeEntry {
+    static constexpr auto ser_size = sizeof(eSides) + sizeof(TimeStamp);
+    using SerBuf = std::array<u8, ser_size>;
     eSides side;
     TimeStamp ts;
+
+    auto serialize() const -> SerBuf {
+        SerBuf ser_buf = {static_cast<u8>(side), ts.hours, ts.minutes, ts.seconds};
+        return ser_buf;
+    }
 };
 
 /**
  * @brief Serializes a data struct to bytes.
- * @warn Each call instantiates its own buffer at compiletime, so the code gets larger. Keep in
- * mind.
+ * @warn Each call instantiates its own buffer at compiletime, so the code gets
+ * larger. Keep in mind.
  */
 template <class T>
 auto serialize(const T& entry) -> u8* {
@@ -55,30 +71,67 @@ auto serialize(const T& entry) -> u8* {
 }
 
 using TSVec = std::vector<TimeEntry>;
+// using TSVec = std::vector<TimeEntry::SerBuf>;
 
 [[noreturn]] int main() {
+    /// ===========================================================================================
+    /// Main Initializations
+    /// ===========================================================================================
     stdio_init_all();
 
     auto spi = SPI(eInstSPI::SPI_0, 17, 18, 19, 16, 1'000'000);
+
+#if 1
+    // TODO(aver): refactor, meaning that the oled module lands in the ael-cpp repo
+    /// General GPIO config
+    gpio_init(EPD_RST_PIN);
+    gpio_set_dir(EPD_RST_PIN, GPIO_OUT);
+
+    gpio_init(EPD_DC_PIN);
+    gpio_set_dir(EPD_DC_PIN, GPIO_OUT);
+
+    gpio_init(EPD_CS_PIN);
+    gpio_set_dir(EPD_CS_PIN, GPIO_OUT);
+
+    gpio_set_dir(EPD_CS_PIN, GPIO_OUT);
+
+    gpio_put(EPD_CS_PIN, 1);
+    gpio_put(EPD_DC_PIN, 0);
+
+    auto& display = pico_oled::Display<pico_oled::eConType::SPI>().clear();
+    // auto display = pico_oled::Display<pico_oled::eConType::SPI>();
+    // display.clear();
+
+    pico_oled::paint::Paint image;
+
+    image.create_image(pico_oled::k_width, pico_oled::k_height,
+                       pico_oled::paint::eRotation::eROTATE_0,
+                       pico_oled::paint::eImageColors::WHITE);
+
+    image.clear_color(pico_oled::paint::eImageColors::BLACK);
+#endif
+    /// ===========================================================================================
+    /// Main Initializations END
+    /// ===========================================================================================
+
     // FIXME(aver): set sampling rate as a parameter
-    auto accm = LIS3DH(spi);
+    // auto accm = LIS3DH(spi,
+    // ael::peripherals::lis3dh::reg_ctrl1::RATE_100_HZ);
 
-    (void)accm.reg_read(reg_addr::WHO_AM_I);
+    auto accm = ADXL345(spi);
+    auto _ = accm.reg_read(ADXL345_REG_DEVID);
 
-    const auto id = accm.reg_read(reg_addr::WHO_AM_I);
-    if (id == LIS3DH::LIS3DH_ID) {
-        printf("SPI address 0x%x\n", id);
-    } else {
-        printf("ERROR: Expected Address 0x%x\n", reg_addr::WHO_AM_I);
-        while (true) {
-            sleep_us(10'000);
-        }
+
+    auto id = accm.reg_read(ADXL345_REG_DEVID);
+    while (id != ADXL345::ADXL345_ID) {
+        std::printf("ERROR: Expected SPI Address: 0x%x, got: 0x%x\n", ADXL345::ADXL345_ID, id);
+        sleep_ms(1000);
     }
 
-    // neat error handling
-    if (const auto err = accm.init(); err) {
-        printf("ERROR: Ecountered error\n");
-        while (true) sleep_us(10000);
+    // Neat error handling
+    if (const auto result = accm.init(); not result) {
+        std::printf("ERROR: Encountered Configuration error\n");
+        while (true) sleep_ms(1'000);
     }
 
     /// Threshold
@@ -88,15 +141,41 @@ using TSVec = std::vector<TimeEntry>;
     auto new_side = eSides::eSide1;
     auto entries = TSVec();
 
-    while (true) {
-        // skip if we don't have new data
-        if (const auto status = accm.reg_read(reg_status::ADDR); not(status & 0x0Fu)) {
-            // printf("Status: 0b%08b\n", status);
-            continue;
+    for (;;) {
+        const auto accel = accm.read_accel();
+        // clear_term();
+        printf("CON: x: %03d, y: %03d, z: %03d\n", accel.x, accel.y, accel.z);
+
+#if 1
+        {
+            image.clear_color(pico_oled::paint::eImageColors::BLACK);
+            sleep_ms(100);
+            image.draw_en_string(0, 10, "X: ", pico_oled::font::Font8,
+                                 pico_oled::paint::eImageColors::WHITE,
+                                 pico_oled::paint::eImageColors::WHITE);
+            image.draw_number(10, 10, accel.x, pico_oled::font::Font8, 0,
+                              pico_oled::paint::eImageColors::WHITE,
+                              pico_oled::paint::eImageColors::WHITE);
+
+            image.draw_en_string(0, 30, "Y: ", pico_oled::font::Font8,
+                                 pico_oled::paint::eImageColors::WHITE,
+                                 pico_oled::paint::eImageColors::WHITE);
+            image.draw_number(10, 30, accel.y, pico_oled::font::Font8, 0,
+                              pico_oled::paint::eImageColors::WHITE,
+                              pico_oled::paint::eImageColors::WHITE);
+
+            image.draw_en_string(0, 50, "Z: ", pico_oled::font::Font8,
+                                 pico_oled::paint::eImageColors::WHITE,
+                                 pico_oled::paint::eImageColors::WHITE);
+            image.draw_number(10, 50, accel.z, pico_oled::font::Font8, 0,
+                              pico_oled::paint::eImageColors::WHITE,
+                              pico_oled::paint::eImageColors::WHITE);
+
+            // 3.Show image on page1
+            display.show(image.get_image());
         }
 
-        const auto accel = accm.read_accel();
-        // printf("CON: x: %03d, y: %03d, z: %03d\n", accel.x, accel.y, accel.z);
+#endif  // 0
 
         if (accel.z > ths) {
             new_side = eSides::eSide1;
@@ -133,7 +212,8 @@ using TSVec = std::vector<TimeEntry>;
             continue;
         }
 
-        printf("\x1B[1;1H\x1B[2J");
+        // clear output for new one
+        clear_term();
 
         const auto entry = TimeEntry{
             .side = new_side,
@@ -142,17 +222,14 @@ using TSVec = std::vector<TimeEntry>;
 
         entries.emplace_back(entry);
 
-        printf("Time spent on side %d: [ %02d:%02d:%02d ]\n",
-               static_cast<int>(old_side),
-               entry.ts.hours,
-               entry.ts.minutes,
-               entry.ts.seconds);
+        printf("Time spent on side %d: [ %02d:%02d:%02d ]\n", static_cast<int>(old_side),
+               entry.ts.hours, entry.ts.minutes, entry.ts.seconds);
         printf("Changed side to: %d\n", static_cast<int>(new_side));
 
         old_side = new_side;
         timer1.start();
 
         // FIXME(aver): sleep should be adjusted to the sampling rate of lis3dh
-        // sleep_ms(100);
+        sleep_ms(100);
     }
 }

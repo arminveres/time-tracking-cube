@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 
-include(libs/pico-oled/cmake/pico_sdk_import.cmake)
+include(./libs/ael-cpp/external/pico-sdk/pico_sdk_init.cmake)
 
 # use pico sdk defined in ael
 set(AEL_USE_PICO_SDK true)
-set(AEL_PICO_IMPORT true)
+set(AEL_PICO_IMPORT false)
 set(AEL_BOARD pico_w)
 # set the path through shell env
 set(AEL_TOOLCHAIN_PATH $ENV{AEL_TOOLCHAIN_PATH})
@@ -22,10 +22,11 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 # initialize the Raspberry Pi Pico SDK
+
 pico_sdk_init()
 
 # TODO(aver): add better inclusion of this lib
-add_subdirectory(libs/pico-oled src)
+add_subdirectory(libs/pico-oled)
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -42,6 +43,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -Wundef
     -Wdouble-promotion
     -Os
+    # -g3
     -mtune=cortex-m0plus
     -fno-common
     -fstack-usage
@@ -63,7 +65,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ael_main
     ael_boards_pi_pico
-    ael_peripherals_lis3dh
+    # ael_peripherals_lis3dh
+    ael_peripherals_adxl345
+
+    pico-oled-paint
+    pico-oled-fonts
 
     pico_stdlib
 )
