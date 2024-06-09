@@ -66,5 +66,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     pico_stdlib
 )
 
+pico_set_linker_script(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/memmap.ld)
 pico_add_extra_outputs(${PROJECT_NAME})
 pico_enable_stdio_usb(${PROJECT_NAME} 1)

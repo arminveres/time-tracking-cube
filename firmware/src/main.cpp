@@ -1,3 +1,4 @@
+#include <hardware/flash.h>
 #include <pico/platform.h>
 #include <pico/stdio.h>
 #include <pico/stdlib.h>
@@ -18,7 +19,12 @@ using namespace ael::boards::pi_pico::spi;
 using namespace ael::boards::pi_pico::extras::lis3dh;
 using namespace ael::peripherals::lis3dh;
 
-enum class eSides {
+constexpr u32 RESERVED_FLASH_ADDRESS = 0x101FC000;
+constexpr u32 RESERVED_FLASH_SIZE = 0x400;
+[[gnu::section("flx_buf")]] u8* const g_flash_buffer =
+    reinterpret_cast<u8*>(RESERVED_FLASH_ADDRESS);
+
+enum class eSides : u8 {
     eSide1 = 1,
     eSide2,
     eSide3,
@@ -127,7 +133,7 @@ using TSVec = std::vector<TimeEntry>;
             continue;
         }
 
-        printf("\e[1;1H\e[2J");
+        printf("\x1B[1;1H\x1B[2J");
 
         const auto entry = TimeEntry{
             .side = new_side,
