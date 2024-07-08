@@ -32,6 +32,8 @@
             gnumake
             picotool
             minicom
+
+            mold
           ];
           shellHook = ''
           '';

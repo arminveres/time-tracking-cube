@@ -47,6 +47,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -ffunction-sections
     -fdata-sections
     -fdiagnostics-color
+    -fuse-ld=mold
 )
 
 target_link_options(${PROJECT_NAME} PRIVATE
