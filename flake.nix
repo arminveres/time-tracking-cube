@@ -32,10 +32,11 @@
             gnumake
             picotool
             minicom
-
             mold
+            clang-tools
           ];
           shellHook = ''
+            export AEL_TOOLCHAIN_PATH="${pkgs.gcc-arm-embedded-13}/bin"
           '';
         };
       });

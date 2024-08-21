@@ -6,7 +6,8 @@ include(libs/pico-oled/cmake/pico_sdk_import.cmake)
 set(AEL_USE_PICO_SDK true)
 set(AEL_PICO_IMPORT true)
 set(AEL_BOARD pico_w)
-set(AEL_TOOLCHAIN_PATH /opt/gcc-arm-none-eabi/bin)
+# set the path through shell env
+set(AEL_TOOLCHAIN_PATH $ENV{AEL_TOOLCHAIN_PATH})
 
 # add AEL
 add_subdirectory(libs/ael-cpp)
