@@ -65,8 +65,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ael_main
     ael_boards_pi_pico
-    # ael_peripherals_lis3dh
-    ael_peripherals_adxl345
+    # ael_drivers_lis3dh
+    ael_drivers_adxl345
 
     pico-oled-paint
     pico-oled-fonts

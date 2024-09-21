@@ -9,10 +9,10 @@
 #include <cstring>
 #include <vector>
 
-#include "ael/boards/pi_pico/extras/adxl345.hpp"
+#include "ael/boards/pi_pico/drivers/adxl345.hpp"
 #include "ael/boards/pi_pico/spi.hpp"
 #include "ael/boards/pi_pico/timer.hpp"
-#include "ael/peripherals/adxl345/registers.hpp"
+#include "ael/drivers/adxl345/registers.hpp"
 #include "ael/types.hpp"
 #include "pico-oled/display.hpp"
 #include "pico-oled/fonts.hpp"
@@ -22,8 +22,8 @@
 using namespace ael::types;
 using namespace ael::boards::pi_pico::timer;
 using namespace ael::boards::pi_pico::spi;
-using namespace ael::boards::pi_pico::extras::adxl345;
-using namespace ael::peripherals::adxl345;
+using namespace ael::boards::pi_pico::drivers::adxl345;
+using namespace ael::drivers::adxl345;
 
 constexpr u32 RESERVED_FLASH_ADDRESS = 0x101FC000;
 constexpr u32 RESERVED_FLASH_SIZE = 0x400;
@@ -116,7 +116,7 @@ using TSVec = std::vector<TimeEntry>;
 
     // FIXME(aver): set sampling rate as a parameter
     // auto accm = LIS3DH(spi,
-    // ael::peripherals::lis3dh::reg_ctrl1::RATE_100_HZ);
+    // ael::drivers::lis3dh::reg_ctrl1::RATE_100_HZ);
 
     auto accm = ADXL345(spi);
     auto _ = accm.reg_read(ADXL345_REG_DEVID);
