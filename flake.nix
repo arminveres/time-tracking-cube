@@ -2,26 +2,21 @@
   description = "Time-Tracking Cube (TTC)";
 
   inputs = {
-    # nixpkgs.url = "github:NixOS/nixpkgs/23.11";
-    nixpkgs.url = "nixpkgs/nixos-unstable";
+    nixpkgs.url = "nixpkgs/nixpkgs-unstable";
     utils.url = "github:numtide/flake-utils";
   };
 
   # Add the system/architecture you would like to support here. Note that not
   # all packages in the official nixpkgs support all platforms.
-  outputs = inputs@{ self, nixpkgs, ... }: inputs.utils.lib.eachSystem [
-    "x86_64-linux"
-    "aarch64-darwin"
-  ]
-    (system:
+  outputs = inputs@{ self, nixpkgs, ... }:
+    inputs.utils.lib.eachSystem [ "x86_64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ ];
           config.allowUnfree = true;
         };
-      in
-      {
+      in {
         devShells.default = pkgs.mkShellNoCC {
           packages = with pkgs; [
             zsh
@@ -37,6 +32,7 @@
           ];
           shellHook = ''
             export AEL_TOOLCHAIN_PATH="${pkgs.gcc-arm-embedded-13}/bin"
+            export PICO_SDK_PATH="$(pwd)/firmware/libs/pico-sdk"
           '';
         };
       });
