@@ -19,20 +19,11 @@
       in {
         devShells.default = pkgs.mkShellNoCC {
           packages = with pkgs; [
-            zsh
-            # Development Tools
-            cppcheck
-            gcc-arm-embedded-13
-            cmake
-            gnumake
             picotool
             minicom
             mold
-            clang-tools
           ];
           shellHook = ''
-            export AEL_TOOLCHAIN_PATH="${pkgs.gcc-arm-embedded-13}/bin"
-            export PICO_SDK_PATH="$(pwd)/firmware/libs/pico-sdk"
           '';
         };
       });
