@@ -22,6 +22,9 @@
             picotool
             minicom
             mold
+            probe-rs
+            openocd
+            libusb
           ];
           shellHook = ''
           '';
