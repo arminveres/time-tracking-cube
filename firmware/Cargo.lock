@@ -741,6 +741,7 @@ dependencies = [
  "embedded-sdmmc",
  "fixed",
  "fixed-macro",
+ "fugit",
  "futures",
  "heapless 0.8.0",
  "log",
@@ -811,6 +812,16 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "fugit"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17186ad64927d5ac8f02c1e77ccefa08ccd9eaa314d5a4772278aa204a22f7e7"
+dependencies = [
+ "defmt",
+ "gcd",
+]
 
 [[package]]
 name = "futures"
@@ -894,6 +905,12 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
 ]
+
+[[package]]
+name = "gcd"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
 
 [[package]]
 name = "getrandom"

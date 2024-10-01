@@ -1,3 +1,11 @@
+# NOTE(aver): Add this, so we do not have errors on missing test crates
+[[bin]]
+name = "firmware"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
 [package]
 edition = "2021"
 name = "firmware"
@@ -66,7 +74,6 @@ futures = { version = "0.3.30", default-features = false, features = [
 ] }
 heapless = "0.8"
 
-
 embedded-hal-1 = { package = "embedded-hal", version = "1.0.0" }
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = { version = "0.1.0", features = ["async"] }
@@ -79,6 +86,7 @@ pio-proc = "0.2"
 pio = "0.2.1"
 rand = { version = "0.8.5", default-features = false }
 embedded-sdmmc = "0.7.0"
+fugit = { version = "0.3.7", features = ["defmt"] }
 
 [profile.release]
 debug = 2

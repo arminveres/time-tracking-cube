@@ -18,16 +18,8 @@
         };
       in {
         devShells.default = pkgs.mkShellNoCC {
-          packages = with pkgs; [
-            picotool
-            minicom
-            mold
-            probe-rs
-            openocd
-            libusb
-          ];
-          shellHook = ''
-          '';
+          packages = with pkgs; [ minicom mold probe-rs ];
+          shellHook = "";
         };
       });
 }
