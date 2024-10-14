@@ -32,14 +32,13 @@ embassy-rp = { version = "0.2.0", features = [
     "time-driver",
     "critical-section-impl",
 ] }
-embassy-futures = { version = "0.1.0" }
+embassy-futures = { version = "0.1.1" }
 embassy-usb = { version = "0.3.0", features = ["defmt"] }
 
 # WARN(aver): this causes issues with dependency: byteorder and since use defmt for logging, we are
-# not going to use this for now
+# not going to use this for now. Also some issues with `embassy-usb`
 # embassy-usb-logger = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git" }
 
-usbd-hid = "0.8.2"
 embassy-net = { version = "0.4.0", features = [
     "defmt",
     "tcp",
@@ -69,14 +68,13 @@ embedded-hal = { version = "1.0.0" }
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = { version = "0.1.0", features = ["async"] }
 embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
-# embedded-storage = { version = "0.3" }
 static_cell = "2"
 portable-atomic = { version = "1.9", features = ["critical-section"] }
 log = "0.4"
 pio-proc = "0.2"
 pio = "0.2.1"
 rand = { version = "0.8.5", default-features = false }
-embedded-sdmmc = "0.7.0"
+embedded-sdmmc = "0.8.0"
 fugit = { version = "0.3.7", features = ["defmt"] }
 
 [profile.release]
