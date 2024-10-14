@@ -58,10 +58,10 @@ async fn main(_spawner: Spawner) {
     info!("Volume 0: {:?}", Debug2Format(&volume0));
 
     let root_dir = RefCell::new(volume0.open_root_dir().unwrap());
-    read_file(root_dir).unwrap();
 
-    let root_dir = RefCell::new(volume0.open_root_dir().unwrap());
-    write_file(root_dir, "Hello from fresh!").unwrap();
+    read_file(&root_dir).unwrap();
+
+    write_file(&root_dir, "Hello from fresh!").unwrap();
 
     info!("All operations successfull");
     loop {
@@ -70,26 +70,27 @@ async fn main(_spawner: Spawner) {
 }
 
 fn read_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
-    mut dir: RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
+    dir: &RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
 ) -> Result<(), Error<SdCardError>> {
-    let mut my_file = dir
-        .get_mut()
+    let mut binding = dir.borrow_mut();
+    let mut file = binding
         .open_file_in_dir("MY_FILE.TXT", Mode::ReadOnly)
         .unwrap();
-    while !my_file.is_eof() {
+    while !file.is_eof() {
         let mut buf = [0u8; 32];
-        if let Ok(n) = my_file.read(&mut buf) {
+        if let Ok(n) = file.read(&mut buf) {
             info!("{:a}", buf[..n]);
         }
     }
+
     Ok(())
 }
 fn write_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
-    mut dir: RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
+    dir: &RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
     text: &str,
 ) -> Result<(), Error<SdCardError>> {
-    let mut my_file = match dir
-        .get_mut()
+    let mut binding = dir.borrow_mut();
+    let mut file = match binding
         .open_file_in_dir("MY_FILE.TXT", embedded_sdmmc::Mode::ReadWriteAppend)
     {
         Ok(file) => file,
@@ -98,7 +99,7 @@ fn write_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
         },
     };
 
-    if let Ok(()) = my_file.write(text.as_bytes()) {
+    if let Ok(()) = file.write(text.as_bytes()) {
         info!("Wrote to sd card");
     } else {
         error!("Failed to write");
