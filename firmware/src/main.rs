@@ -7,7 +7,10 @@ use defmt::{error, info, Debug2Format};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_rp::{
+    bind_interrupts,
     gpio::{Level, Output},
+    i2c::{self, Config, InterruptHandler},
+    peripherals::I2C1,
     spi::{self, Spi},
 };
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -31,6 +34,12 @@ impl TimeSource for DummyTimesource {
     }
 }
 
+bind_interrupts!(struct Irqs {
+    I2C1_IRQ => InterruptHandler<I2C1>;
+});
+
+const ADXL345_ADDR: u8 = 0x53;
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Starting main!");
@@ -43,6 +52,21 @@ async fn main(_spawner: Spawner) {
 
     let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
     let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+
+    let sda = p.PIN_14;
+    let scl = p.PIN_15;
+
+    info!("Set up i2c on pin 14 and 15");
+    let i2c_conf = i2c::Config::default();
+    let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
+
+    let mut adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
+        Ok(a) => a,
+        Err(err) => loop {
+            error!("Error: {}", Debug2Format(&err));
+            Timer::after_secs(10).await;
+        },
+    };
 
     // Real cs pin
     let cs = Output::new(p.PIN_5, Level::High);
@@ -65,6 +89,8 @@ async fn main(_spawner: Spawner) {
 
     info!("All operations successfull");
     loop {
+        let (x, y, z) = adxl.get_accel_raw().unwrap();
+        info!("ADXL345: x: {}, y: {}, z: {}", x, y, z);
         Timer::after_secs(1).await;
     }
 }
@@ -90,14 +116,13 @@ fn write_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
     text: &str,
 ) -> Result<(), Error<SdCardError>> {
     let mut binding = dir.borrow_mut();
-    let mut file = match binding
-        .open_file_in_dir("MY_FILE.TXT", embedded_sdmmc::Mode::ReadWriteAppend)
-    {
-        Ok(file) => file,
-        Err(err) => loop {
-            error!("We got an error: {:?}", defmt::Debug2Format(&err));
-        },
-    };
+    let mut file =
+        match binding.open_file_in_dir("MY_FILE.TXT", embedded_sdmmc::Mode::ReadWriteAppend) {
+            Ok(file) => file,
+            Err(err) => loop {
+                error!("We got an error: {:?}", defmt::Debug2Format(&err));
+            },
+        };
 
     if let Ok(()) = file.write(text.as_bytes()) {
         info!("Wrote to sd card");
