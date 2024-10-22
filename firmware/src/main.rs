@@ -3,13 +3,13 @@
 
 use core::cell::RefCell;
 
-use defmt::{error, info, Debug2Format};
+use defmt::{error, info, unwrap, Debug2Format};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
-    i2c::{self, Config, InterruptHandler},
+    i2c::{self, Async, Config, I2c, InterruptHandler},
     peripherals::I2C1,
     spi::{self, Spi},
 };
@@ -40,8 +40,17 @@ bind_interrupts!(struct Irqs {
 
 const ADXL345_ADDR: u8 = 0x53;
 
+#[embassy_executor::task]
+async fn log_accel(mut accel: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
+    loop {
+        let (x, y, z) = accel.get_accel_raw().unwrap();
+        info!("ADXL345: x: {}, y: {}, z: {}", x, y, z);
+        Timer::after_secs(1).await;
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     info!("Starting main!");
     embassy_rp::pac::SIO.spinlock(31).write_value(1);
     let p = embassy_rp::init(Default::default());
@@ -60,13 +69,15 @@ async fn main(_spawner: Spawner) {
     let i2c_conf = i2c::Config::default();
     let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
 
-    let mut adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
+    let adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
         Ok(a) => a,
         Err(err) => loop {
             error!("Error: {}", Debug2Format(&err));
             Timer::after_secs(10).await;
         },
     };
+
+    unwrap!(spawner.spawn(log_accel(adxl)));
 
     // Real cs pin
     let cs = Output::new(p.PIN_5, Level::High);
@@ -89,8 +100,6 @@ async fn main(_spawner: Spawner) {
 
     info!("All operations successfull");
     loop {
-        let (x, y, z) = adxl.get_accel_raw().unwrap();
-        info!("ADXL345: x: {}, y: {}, z: {}", x, y, z);
         Timer::after_secs(1).await;
     }
 }
