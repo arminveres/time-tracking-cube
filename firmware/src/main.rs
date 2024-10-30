@@ -9,12 +9,13 @@ use embassy_executor::Spawner;
 use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
-    i2c::{self, Async, Config, I2c, InterruptHandler},
+    i2c::{self, Async, I2c, InterruptHandler},
     peripherals::I2C1,
     spi::{self, Spi},
 };
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::{
+    blocking_mutex::{raw::NoopRawMutex, Mutex},
+};
 use embassy_time::Timer;
 use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
 use {defmt_rtt as _, panic_probe as _};
@@ -40,11 +41,90 @@ bind_interrupts!(struct Irqs {
 
 const ADXL345_ADDR: u8 = 0x53;
 
+type Accel = (i16, i16, i16);
+
+/// Defines the six sides the cube has.
+#[derive(PartialEq, Clone, Copy)]
+enum Side {
+    One = 1,
+    Two = 2,
+    Three = 3,
+    Four = 4,
+    Five = 5,
+    Six = 6,
+}
+
+impl Side {
+    pub fn get_side_from_accel(acc: Accel) -> Self {
+        const THS: i16 = 127;
+
+        if acc.2 > THS {
+            Self::One
+        } else if acc.2 < (-THS) {
+            Self::Two
+        } else if acc.1 > THS {
+            Self::Three
+        } else if acc.1 < (-THS) {
+            Self::Four
+        } else if acc.0 > THS {
+            Self::Five
+        } else if acc.0 < (-THS) {
+            Self::Six
+        } else {
+            panic!("Unknown Side values")
+        }
+    }
+}
+
+// struct TTCConfig {
+//     sides: u8,
+// }
+
+// impl TTCConfig {
+//     pub fn gen_entry() {}
+// }
+
+struct TTCEntry {
+    pub side: u8,
+    pub duration: u64,
+}
+
+impl TTCEntry {
+    fn new(side: Side, duration: u64) -> Self {
+        Self {
+            side: side as u8,
+            duration,
+        }
+    }
+}
+
 #[embassy_executor::task]
 async fn log_accel(mut accel: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
+    const THS: u64 = 15; // Threshold in seconds on when to start a new timer.
+    let mut time = embassy_time::Instant::now();
+    let mut starting_side = Side::One;
+
     loop {
-        let (x, y, z) = accel.get_accel_raw().unwrap();
-        info!("ADXL345: x: {}, y: {}, z: {}", x, y, z);
+        let accel = aclm.get_accel_raw().unwrap();
+        let current_side = Side::get_side_from_accel(accel);
+
+        // info!("ADXL345: x: {}, y: {}, z: {}", accel.0, accel.1, accel.2);
+        // info!("Side: {}", current_side as u8);
+        // Timer::after_secs(1).await;
+
+        if current_side == starting_side {
+            continue;
+        }
+        if time.elapsed().as_secs() < THS {
+            continue;
+        }
+
+        let entry = TTCEntry::new(starting_side, time.elapsed().as_secs());
+        starting_side = current_side;
+        time = embassy_time::Instant::now(); // reset time
+
+        info!("New Entry: {}s on side {}", entry.duration, entry.side);
+        // sender.send(entry);
         Timer::after_secs(1).await;
     }
 }
