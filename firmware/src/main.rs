@@ -4,21 +4,21 @@
 use core::cell::RefCell;
 
 use defmt::{error, info, unwrap, Debug2Format};
-use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
     i2c::{self, Async, I2c, InterruptHandler},
-    peripherals::I2C1,
+    peripherals::{I2C1, SPI0},
     spi::{self, Spi},
 };
-use embassy_sync::{
-    blocking_mutex::{raw::NoopRawMutex, Mutex},
-};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Timer};
 use embedded_hal::delay::DelayNs;
 use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
+use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
@@ -107,36 +107,7 @@ impl TTCEntry {
     }
 }
 
-#[embassy_executor::task]
-async fn log_accel(mut accel: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
-    const THS: u64 = 15; // Threshold in seconds on when to start a new timer.
-    let mut time = embassy_time::Instant::now();
-    let mut starting_side = Side::One;
-
-    loop {
-        let accel = aclm.get_accel_raw().unwrap();
-        let current_side = Side::get_side_from_accel(accel);
-
-        // info!("ADXL345: x: {}, y: {}, z: {}", accel.0, accel.1, accel.2);
-        // info!("Side: {}", current_side as u8);
-        // Timer::after_secs(1).await;
-
-        if current_side == starting_side {
-            continue;
-        }
-        if time.elapsed().as_secs() < THS {
-            continue;
-        }
-
-        let entry = TTCEntry::new(starting_side, time.elapsed().as_secs());
-        starting_side = current_side;
-        time = embassy_time::Instant::now(); // reset time
-
-        info!("New Entry: {}s on side {}", entry.duration, entry.side);
-        // sender.send(entry);
-        Timer::after_secs(1).await;
-    }
-}
+type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -153,6 +124,8 @@ async fn main(spawner: Spawner) {
         p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, p.DMA_CH0, p.DMA_CH1, spi_config,
     );
     // let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+    static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
+    let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
     let sda = p.PIN_14;
     let scl = p.PIN_15;
@@ -176,8 +149,7 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_6, Level::High);
     let mut reset = Output::new(p.PIN_8, Level::High);
 
-    // let spi_dev = SpiDevice::new(&spi_bus, cs);
-    let spi_dev = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs_disp, Delay);
+    let spi_dev = SpiDevice::new(spi_bus, cs_disp);
     let di = display_interface_spi::SPIInterface::new(spi_dev, dc);
 
     let disp = oled_async::Builder::new(oled_async::displays::sh1107::Sh1107_64_128 {})
@@ -196,15 +168,14 @@ async fn main(spawner: Spawner) {
         .text_color(BinaryColor::On)
         .build();
 
-    Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
+    Text::with_baseline("Hello there!", Point::zero(), text_style, Baseline::Top)
         .draw(&mut disp)
         .unwrap();
 
     disp.flush().await.unwrap();
 
-    loop {
-        Timer::after_secs(1).await;
-    }
+
+    loop { Timer::after_secs(1).await; }
 
     /*
         // Real cs pin
@@ -268,4 +239,38 @@ fn write_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
         error!("Failed to write");
     }
     Ok(())
+}
+
+#[embassy_executor::task]
+async fn log_accel(
+    mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>, // sender: Sender<'static, NoopRawMutex, TTCEntry, 1>,
+) -> ! {
+    const THS: u64 = 15; // Threshold in seconds on when to start a new timer.
+    let mut time = embassy_time::Instant::now();
+    let mut starting_side = Side::One;
+    info!("Running Acceleration Task");
+
+    loop {
+        let accel = aclm.get_accel_raw().unwrap();
+        let current_side = Side::get_side_from_accel(accel);
+
+        // info!("ADXL345: x: {}, y: {}, z: {}", accel.0, accel.1, accel.2);
+        // info!("Side: {}", current_side as u8);
+        // Timer::after_secs(1).await;
+
+        if current_side == starting_side {
+            continue;
+        }
+        if time.elapsed().as_secs() < THS {
+            continue;
+        }
+
+        let entry = TTCEntry::new(starting_side, time.elapsed().as_secs());
+        starting_side = current_side;
+        time = embassy_time::Instant::now(); // reset time
+
+        info!("New Entry: {}s on side {}", entry.duration, entry.side);
+        // sender.send(entry);
+        Timer::after_secs(1).await;
+    }
 }
