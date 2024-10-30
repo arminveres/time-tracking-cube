@@ -16,9 +16,18 @@ use embassy_rp::{
 use embassy_sync::{
     blocking_mutex::{raw::NoopRawMutex, Mutex},
 };
-use embassy_time::Timer;
+use embassy_time::{Delay, Timer};
+use embedded_hal::delay::DelayNs;
 use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
 use {defmt_rtt as _, panic_probe as _};
+
+use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    pixelcolor::BinaryColor,
+    prelude::*,
+    text::{Baseline, Text},
+};
+use oled_async::{prelude::*, Builder};
 
 struct DummyTimesource();
 
@@ -139,13 +148,16 @@ async fn main(spawner: Spawner) {
     let mut spi_config = spi::Config::default();
     spi_config.frequency = 400_000;
 
-    let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
-    let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+    // let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
+    let spi = Spi::new(
+        p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, p.DMA_CH0, p.DMA_CH1, spi_config,
+    );
+    // let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
 
     let sda = p.PIN_14;
     let scl = p.PIN_15;
 
-    info!("Set up i2c on pin 14 and 15");
+    info!("Setting up i2c on pin 14 and 15");
     let i2c_conf = i2c::Config::default();
     let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
 
@@ -159,29 +171,66 @@ async fn main(spawner: Spawner) {
 
     unwrap!(spawner.spawn(log_accel(adxl)));
 
-    // Real cs pin
-    let cs = Output::new(p.PIN_5, Level::High);
+    info!("Setting up OLED Display");
+    let cs_disp = Output::new(p.PIN_7, Level::High);
+    let dc = Output::new(p.PIN_6, Level::High);
+    let mut reset = Output::new(p.PIN_8, Level::High);
 
-    // let spi_dev = ExclusiveDevice::new_no_delay(spi, cs);
-    let spi_dev = SpiDevice::new(&spi_bus, cs);
-    let sdcard = SdCard::new(spi_dev, embassy_time::Delay);
-    info!("Card size is {} bytes", sdcard.num_bytes().unwrap());
+    // let spi_dev = SpiDevice::new(&spi_bus, cs);
+    let spi_dev = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs_disp, Delay);
+    let di = display_interface_spi::SPIInterface::new(spi_dev, dc);
 
-    let mut volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
+    let disp = oled_async::Builder::new(oled_async::displays::sh1107::Sh1107_64_128 {})
+        .with_rotation(DisplayRotation::Rotate90)
+        .connect(di);
+    let mut disp: GraphicsMode<_, _> = disp.into();
+    let mut delay = Delay {};
 
-    let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
-    info!("Volume 0: {:?}", Debug2Format(&volume0));
+    disp.reset(&mut reset, &mut delay).unwrap();
+    disp.init().await.unwrap();
+    disp.clear();
+    disp.flush().await.unwrap();
 
-    let root_dir = RefCell::new(volume0.open_root_dir().unwrap());
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
 
-    read_file(&root_dir).unwrap();
+    Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
+        .draw(&mut disp)
+        .unwrap();
 
-    write_file(&root_dir, "Hello from fresh!").unwrap();
+    disp.flush().await.unwrap();
 
-    info!("All operations successfull");
     loop {
         Timer::after_secs(1).await;
     }
+
+    /*
+        // Real cs pin
+        let cs = Output::new(p.PIN_5, Level::High);
+
+        // let spi_dev = ExclusiveDevice::new_no_delay(spi, cs);
+        let spi_dev = SpiDevice::new(&spi_bus, cs);
+        let sdcard = SdCard::new(spi_dev, embassy_time::Delay);
+        info!("Card size is {} bytes", sdcard.num_bytes().unwrap());
+
+        let mut volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
+
+        let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
+        info!("Volume 0: {:?}", Debug2Format(&volume0));
+
+        let root_dir = RefCell::new(volume0.open_root_dir().unwrap());
+
+        read_file(&root_dir).unwrap();
+
+        write_file(&root_dir, "Hello from fresh!").unwrap();
+
+        info!("All operations successfull");
+        loop {
+            Timer::after_secs(1).await;
+        }
+    */
 }
 
 fn read_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
