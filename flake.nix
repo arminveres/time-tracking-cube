@@ -18,7 +18,7 @@
         };
       in {
         devShells.default = pkgs.mkShellNoCC {
-          packages = with pkgs; [ minicom mold probe-rs ];
+          packages = with pkgs; [ minicom mold probe-rs gdb pkg-config ];
           shellHook = "";
         };
       });
