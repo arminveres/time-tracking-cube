@@ -4,7 +4,8 @@
 use core::cell::RefCell;
 
 use defmt::{error, info, unwrap, Debug2Format};
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
+use embassy_embedded_hal::shared_bus::asynch;
+use embassy_embedded_hal::shared_bus::blocking;
 use embassy_executor::Spawner;
 use embassy_rp::{
     bind_interrupts,
@@ -13,10 +14,9 @@ use embassy_rp::{
     peripherals::{I2C1, SPI0},
     spi::{self, Spi},
 };
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex;
+use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
-use embedded_hal::delay::DelayNs;
 use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
@@ -27,8 +27,9 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use oled_async::{prelude::*, Builder};
+use oled_async::prelude::*;
 
+// #[allow(dead_code)]
 struct DummyTimesource();
 
 impl TimeSource for DummyTimesource {
@@ -107,7 +108,9 @@ impl TTCEntry {
     }
 }
 
-type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
+type Spi0BusAsync = mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
+// type Spi1Bus =
+//     blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI1, spi::Blocking>>;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -115,46 +118,52 @@ async fn main(spawner: Spawner) {
     embassy_rp::pac::SIO.spinlock(31).write_value(1);
     let p = embassy_rp::init(Default::default());
 
-    // SPI clock needs to be running at <= 400kHz during initialization
-    let mut spi_config = spi::Config::default();
-    spi_config.frequency = 400_000;
+    {
+        let sda = p.PIN_14;
+        let scl = p.PIN_15;
 
-    // let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
-    let spi = Spi::new(
-        p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, p.DMA_CH0, p.DMA_CH1, spi_config,
-    );
-    // let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
-    static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
-    let spi_bus = SPI_BUS.init(Mutex::new(spi));
+        info!("Setting up i2c on pin 14 and 15");
+        let i2c_conf = i2c::Config::default();
+        let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
 
-    let sda = p.PIN_14;
-    let scl = p.PIN_15;
+        let adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
+            Ok(a) => a,
+            Err(err) => loop {
+                error!("Error: {}", Debug2Format(&err));
+                Timer::after_secs(10).await;
+            },
+        };
+        unwrap!(spawner.spawn(log_accel(adxl)));
+    }
 
-    info!("Setting up i2c on pin 14 and 15");
-    let i2c_conf = i2c::Config::default();
-    let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
+    let disp_if = {
+        // SPI clock needs to be running at <= 400kHz during initialization
+        let mut spi_config = spi::Config::default();
+        spi_config.frequency = 400_000;
 
-    let adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
-        Ok(a) => a,
-        Err(err) => loop {
-            error!("Error: {}", Debug2Format(&err));
-            Timer::after_secs(10).await;
-        },
+        // let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
+        let spi = Spi::new(
+            p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, p.DMA_CH0, p.DMA_CH1, spi_config,
+        );
+        // let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+        static SPI_BUS: StaticCell<Spi0BusAsync> = StaticCell::new();
+        let spi_bus = SPI_BUS.init(mutex::Mutex::new(spi));
+
+        info!("Setting up OLED Display");
+        let cs_disp = Output::new(p.PIN_7, Level::High);
+        let dc = Output::new(p.PIN_6, Level::High);
+
+        let spi_dev = asynch::spi::SpiDevice::new(spi_bus, cs_disp);
+
+        display_interface_spi::SPIInterface::new(spi_dev, dc)
     };
 
-    unwrap!(spawner.spawn(log_accel(adxl)));
-
-    info!("Setting up OLED Display");
-    let cs_disp = Output::new(p.PIN_7, Level::High);
-    let dc = Output::new(p.PIN_6, Level::High);
+    // Do stuff with the display
     let mut reset = Output::new(p.PIN_8, Level::High);
-
-    let spi_dev = SpiDevice::new(spi_bus, cs_disp);
-    let di = display_interface_spi::SPIInterface::new(spi_dev, dc);
 
     let disp = oled_async::Builder::new(oled_async::displays::sh1107::Sh1107_64_128 {})
         .with_rotation(DisplayRotation::Rotate90)
-        .connect(di);
+        .connect(disp_if);
     let mut disp: GraphicsMode<_, _> = disp.into();
     let mut delay = Delay {};
 
@@ -174,15 +183,26 @@ async fn main(spawner: Spawner) {
 
     disp.flush().await.unwrap();
 
+    // loop {
+    //     Timer::after_secs(1).await;
+    // }
 
-    loop { Timer::after_secs(1).await; }
+    {
+        let mut spi_config = spi::Config::default();
+        spi_config.frequency = 400_000;
 
-    /*
+        let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config);
+
+        // static SPI_BUS: StaticCell<Spi1Bus> = StaticCell::new();
+        // let spi_bus = SPI_BUS.init(blocking_mutex::Mutex::new(spi));
+        let spi_bus: blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, _> =
+            blocking_mutex::Mutex::new(RefCell::new(spi));
+
         // Real cs pin
         let cs = Output::new(p.PIN_5, Level::High);
 
-        // let spi_dev = ExclusiveDevice::new_no_delay(spi, cs);
-        let spi_dev = SpiDevice::new(&spi_bus, cs);
+        // let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs);
+        let spi_dev = blocking::spi::SpiDevice::new(&spi_bus, cs);
         let sdcard = SdCard::new(spi_dev, embassy_time::Delay);
         info!("Card size is {} bytes", sdcard.num_bytes().unwrap());
 
@@ -201,7 +221,7 @@ async fn main(spawner: Spawner) {
         loop {
             Timer::after_secs(1).await;
         }
-    */
+    }
 }
 
 fn read_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
