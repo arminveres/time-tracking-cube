@@ -3,6 +3,11 @@ runner = "probe-rs run --chip RP2040"
 
 [build]
 target = "thumbv6m-none-eabi" # Cortex-M0 and Cortex-M0+
+rustc-wrapper = "sccache"
 
 [env]
 DEFMT_LOG = "debug"
+
+[target.thumbv6m-none-eabi]
+linker = "arm-none-eabi-ld"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
