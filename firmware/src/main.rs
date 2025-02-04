@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+mod sd_card;
+mod time_tracking;
+
 use core::cell::RefCell;
 
 use defmt::{error, info, unwrap, Debug2Format};
@@ -17,7 +20,7 @@ use embassy_rp::{
 use embassy_sync::blocking_mutex;
 use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
-use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
+use sd_card::setup_sd_card;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -29,84 +32,11 @@ use embedded_graphics::{
 };
 use oled_async::prelude::*;
 
-// #[allow(dead_code)]
-struct DummyTimesource();
-
-impl TimeSource for DummyTimesource {
-    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
-        embedded_sdmmc::Timestamp {
-            year_since_1970: 0,
-            zero_indexed_month: 0,
-            zero_indexed_day: 0,
-            hours: 0,
-            minutes: 0,
-            seconds: 0,
-        }
-    }
-}
-
 bind_interrupts!(struct Irqs {
     I2C1_IRQ => InterruptHandler<I2C1>;
 });
 
 const ADXL345_ADDR: u8 = 0x53;
-
-type Accel = (i16, i16, i16);
-
-/// Defines the six sides the cube has.
-#[derive(PartialEq, Clone, Copy)]
-enum Side {
-    One = 1,
-    Two = 2,
-    Three = 3,
-    Four = 4,
-    Five = 5,
-    Six = 6,
-}
-
-impl Side {
-    pub fn get_side_from_accel(acc: Accel) -> Self {
-        const THS: i16 = 127;
-
-        if acc.2 > THS {
-            Self::One
-        } else if acc.2 < (-THS) {
-            Self::Two
-        } else if acc.1 > THS {
-            Self::Three
-        } else if acc.1 < (-THS) {
-            Self::Four
-        } else if acc.0 > THS {
-            Self::Five
-        } else if acc.0 < (-THS) {
-            Self::Six
-        } else {
-            panic!("Unknown Side values")
-        }
-    }
-}
-
-// struct TTCConfig {
-//     sides: u8,
-// }
-
-// impl TTCConfig {
-//     pub fn gen_entry() {}
-// }
-
-struct TTCEntry {
-    pub side: u8,
-    pub duration: u64,
-}
-
-impl TTCEntry {
-    fn new(side: Side, duration: u64) -> Self {
-        Self {
-            side: side as u8,
-            duration,
-        }
-    }
-}
 
 type Spi0BusAsync = mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
 // type Spi1Bus =
@@ -183,18 +113,12 @@ async fn main(spawner: Spawner) {
 
     disp.flush().await.unwrap();
 
-    // loop {
-    //     Timer::after_secs(1).await;
-    // }
-
     {
         let mut spi_config = spi::Config::default();
         spi_config.frequency = 400_000;
 
         let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config);
 
-        // static SPI_BUS: StaticCell<Spi1Bus> = StaticCell::new();
-        // let spi_bus = SPI_BUS.init(blocking_mutex::Mutex::new(spi));
         let spi_bus: blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, _> =
             blocking_mutex::Mutex::new(RefCell::new(spi));
 
@@ -203,76 +127,26 @@ async fn main(spawner: Spawner) {
 
         // let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs);
         let spi_dev = blocking::spi::SpiDevice::new(&spi_bus, cs);
-        let sdcard = SdCard::new(spi_dev, embassy_time::Delay);
-        info!("Card size is {} bytes", sdcard.num_bytes().unwrap());
-
-        let mut volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
-
-        let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
-        info!("Volume 0: {:?}", Debug2Format(&volume0));
-
-        let root_dir = RefCell::new(volume0.open_root_dir().unwrap());
-
-        read_file(&root_dir).unwrap();
-
-        write_file(&root_dir, "Hello from fresh!").unwrap();
-
-        info!("All operations successfull");
-        loop {
-            Timer::after_secs(1).await;
-        }
+        setup_sd_card(spi_dev);
     }
-}
-
-fn read_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
-    dir: &RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
-) -> Result<(), Error<SdCardError>> {
-    let mut binding = dir.borrow_mut();
-    let mut file = binding
-        .open_file_in_dir("MY_FILE.TXT", Mode::ReadOnly)
-        .unwrap();
-    while !file.is_eof() {
-        let mut buf = [0u8; 32];
-        if let Ok(n) = file.read(&mut buf) {
-            info!("{:a}", buf[..n]);
-        }
-    }
-
-    Ok(())
-}
-fn write_file<D: embedded_sdmmc::BlockDevice, T: embedded_sdmmc::TimeSource>(
-    dir: &RefCell<embedded_sdmmc::Directory<D, T, 4, 4, 1>>,
-    text: &str,
-) -> Result<(), Error<SdCardError>> {
-    let mut binding = dir.borrow_mut();
-    let mut file =
-        match binding.open_file_in_dir("MY_FILE.TXT", embedded_sdmmc::Mode::ReadWriteAppend) {
-            Ok(file) => file,
-            Err(err) => loop {
-                error!("We got an error: {:?}", defmt::Debug2Format(&err));
-            },
-        };
-
-    if let Ok(()) = file.write(text.as_bytes()) {
-        info!("Wrote to sd card");
-    } else {
-        error!("Failed to write");
-    }
-    Ok(())
 }
 
 #[embassy_executor::task]
-async fn log_accel(
-    mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>, // sender: Sender<'static, NoopRawMutex, TTCEntry, 1>,
-) -> ! {
-    const THS: u64 = 15; // Threshold in seconds on when to start a new timer.
+async fn log_accel(mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
+    const TRESHOLD: u64 = 15; // Threshold in seconds on when to start a new timer.
+
     let mut time = embassy_time::Instant::now();
-    let mut starting_side = Side::One;
+    let mut starting_side = time_tracking::Side::One;
     info!("Running Acceleration Task");
 
     loop {
-        let accel = aclm.get_accel_raw().unwrap();
-        let current_side = Side::get_side_from_accel(accel);
+        let raw_accel = aclm.get_accel_raw().unwrap();
+        let accel = time_tracking::Accel {
+            x: raw_accel.0,
+            y: raw_accel.1,
+            z: raw_accel.2,
+        };
+        let current_side = accel.get_side();
 
         // info!("ADXL345: x: {}, y: {}, z: {}", accel.0, accel.1, accel.2);
         // info!("Side: {}", current_side as u8);
@@ -281,16 +155,17 @@ async fn log_accel(
         if current_side == starting_side {
             continue;
         }
-        if time.elapsed().as_secs() < THS {
+        if time.elapsed().as_secs() < TRESHOLD {
             continue;
         }
 
-        let entry = TTCEntry::new(starting_side, time.elapsed().as_secs());
+        let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
         starting_side = current_side;
         time = embassy_time::Instant::now(); // reset time
 
         info!("New Entry: {}s on side {}", entry.duration, entry.side);
-        // sender.send(entry);
+        // TODO(aver): Create an entry on the filesystem
+
         Timer::after_secs(1).await;
     }
 }
