@@ -1,0 +1,11 @@
+# See more under
+# https://github.com/probe-rs/probe-rs/blob/master/probe-rs-tools/src/bin/probe-rs/cmd/cargo_embed/config/default.toml
+
+[default.general]
+chip = "rp2040"
+
+[debug.rtt]
+enabled = true
+
+[debug.gdb]
+enabled = true
