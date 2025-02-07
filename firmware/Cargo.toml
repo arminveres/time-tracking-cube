@@ -13,41 +13,41 @@ version = "0.1.0"
 authors = ["Armin Veres <armin.veres@hotmail.com>"]
 
 [dependencies]
-embassy-embedded-hal = { version = "0.2.0", features = ["defmt"] }
-embassy-sync = { version = "0.6.0", features = ["defmt"] }
-embassy-executor = { version = "0.6.0", features = [
+embassy-embedded-hal = { version = "0.3.0", features = ["defmt"] }
+embassy-sync = { version = "0.6.2", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = [
     "arch-cortex-m",
     "executor-thread",
     "executor-interrupt",
     "defmt",
-    "integrated-timers",
 ] }
-embassy-time = { version = "0.3.2", features = [
+embassy-time = { version = "0.4.0", features = [
     "defmt",
     "defmt-timestamp-uptime",
 ] }
-embassy-rp = { version = "0.2.0", features = [
+embassy-rp = { version = "0.3.1", features = [
     "defmt",
     "unstable-pac",
     "time-driver",
     "critical-section-impl",
+    "rp2040",
 ] }
 embassy-futures = { version = "0.1.1" }
-embassy-usb = { version = "0.3.0", features = ["defmt"] }
+embassy-usb = { version = "0.4.0", features = ["defmt"] }
 
 # WARN(aver): this causes issues with dependency: byteorder and since use defmt for logging, we are
 # not going to use this for now. Also some issues with `embassy-usb`
 # embassy-usb-logger = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git" }
 
-embassy-net = { version = "0.4.0", features = [
+embassy-net = { version = "0.6.0", features = [
     "defmt",
     "tcp",
     "udp",
     "dhcpv4",
     "medium-ethernet",
 ] }
-cyw43-pio = { version = "0.2.0", features = ["defmt", "overclock"] }
-cyw43 = { version = "0.2.0", features = ["defmt", "firmware-logs"] }
+cyw43-pio = { version = "0.3.0", features = ["defmt"] }
+cyw43 = { version = "0.3.0", features = ["defmt", "firmware-logs"] }
 
 defmt = "0.3"
 defmt-rtt = "0.4"
@@ -55,9 +55,9 @@ fixed = "1.28.0"
 fixed-macro = "1.2"
 
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
-cortex-m-rt = "0.7.3"
+cortex-m-rt = "0.7.5"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
-futures = { version = "0.3.30", default-features = false, features = [
+futures = { version = "0.3.31", default-features = false, features = [
     "async-await",
     "cfg-target-has-atomic",
     "unstable",
@@ -66,21 +66,22 @@ heapless = "0.8"
 
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = "1.0.0"
-embedded-hal-bus = { version = "0.1.0", features = ["async"] }
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
 embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
 static_cell = "2"
-portable-atomic = { version = "1.9", features = ["critical-section"] }
+portable-atomic = { version = "1.10", features = ["critical-section"] }
 log = "0.4"
 pio-proc = "0.2"
 pio = "0.2.1"
-rand = { version = "0.8.5", default-features = false }
-embedded-sdmmc = "0.8.0"
+rand = { version = "0.9.0", default-features = false }
+embedded-sdmmc = "0.8.1"
 fugit = { version = "0.3.7", features = ["defmt"] }
 adxl345-eh-driver = "0.2.2"
-oled_async = { version = "0.1.0-alpha1", features = ["spi"], git = "https://github.com/cschuhen/oled_drivers" }
+oled_async = { version = "0.1.0-alpha1", features = [
+    "spi",
+], git = "https://github.com/cschuhen/oled_drivers" }
 embedded-graphics = { version = "0.8.1", features = ["defmt"] }
 display-interface-spi = "0.5.0"
-toml = "0.8.20"
 
 [profile.release]
 debug = 2
