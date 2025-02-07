@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod config;
 mod sd_card;
 mod time_tracking;
 
