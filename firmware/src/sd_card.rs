@@ -3,6 +3,7 @@ use core::cell::RefCell;
 use defmt::{error, info, Debug2Format};
 use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
 
+// Define a dummy time source for the sd card filesytem
 pub struct DummyTimesource();
 
 impl TimeSource for DummyTimesource {
@@ -17,6 +18,8 @@ impl TimeSource for DummyTimesource {
         }
     }
 }
+
+// TODO(aver): create SD card struct with methods
 
 pub fn setup_sd_card<SPI>(spi_dev: SPI)
 where
