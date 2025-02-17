@@ -67,7 +67,7 @@ async fn main(spawner: Spawner) {
         unwrap!(spawner.spawn(log_accel(adxl)));
     }
 
-    let disp_if = {
+    let disp = {
         // SPI clock needs to be running at <= 400kHz during initialization
         let mut spi_config = spi::Config::default();
         spi_config.frequency = 400_000;
@@ -86,15 +86,16 @@ async fn main(spawner: Spawner) {
 
         let spi_dev = asynch::spi::SpiDevice::new(spi_bus, cs_disp);
 
-        display_interface_spi::SPIInterface::new(spi_dev, dc)
+        let disp_interface = display_interface_spi::SPIInterface::new(spi_dev, dc);
+
+        oled_async::Builder::new(oled_async::displays::sh1107::Sh1107_64_128 {})
+            .with_rotation(DisplayRotation::Rotate90)
+            .connect(disp_interface)
     };
 
     // Do stuff with the display
     let mut reset = Output::new(p.PIN_8, Level::High);
 
-    let disp = oled_async::Builder::new(oled_async::displays::sh1107::Sh1107_64_128 {})
-        .with_rotation(DisplayRotation::Rotate90)
-        .connect(disp_if);
     let mut disp: GraphicsMode<_, _> = disp.into();
     let mut delay = Delay {};
 
@@ -116,6 +117,7 @@ async fn main(spawner: Spawner) {
 
     {
         let mut spi_config = spi::Config::default();
+        // TODO(aver): test max frequency
         spi_config.frequency = 400_000;
 
         let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config);
