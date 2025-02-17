@@ -7,6 +7,7 @@ mod time_tracking;
 
 use core::cell::RefCell;
 
+use defmt::debug;
 use defmt::{error, info, unwrap, Debug2Format};
 use embassy_embedded_hal::shared_bus::asynch;
 use embassy_embedded_hal::shared_bus::blocking;
@@ -15,13 +16,13 @@ use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
     i2c::{self, Async, I2c, InterruptHandler},
-    peripherals::{I2C1, SPI0},
+    peripherals::{I2C1, SPI0, SPI1},
     spi::{self, Spi},
 };
 use embassy_sync::blocking_mutex;
 use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
-use sd_card::setup_sd_card;
+use heapless::{String, Vec};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -40,8 +41,13 @@ bind_interrupts!(struct Irqs {
 const ADXL345_ADDR: u8 = 0x53;
 
 type Spi0BusAsync = mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
-// type Spi1Bus =
-//     blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI1, spi::Blocking>>;
+static SPI_BUS_DISPLAY: StaticCell<Spi0BusAsync> = StaticCell::new();
+
+type Spi1Bus = blocking_mutex::Mutex<
+    blocking_mutex::raw::NoopRawMutex,
+    RefCell<Spi<'static, SPI1, spi::Blocking>>,
+>;
+static SPI_BUS_SDCARD: StaticCell<Spi1Bus> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -64,7 +70,7 @@ async fn main(spawner: Spawner) {
                 Timer::after_secs(10).await;
             },
         };
-        unwrap!(spawner.spawn(log_accel(adxl)));
+        // unwrap!(spawner.spawn(log_accel(adxl)));
     }
 
     let disp = {
@@ -77,8 +83,7 @@ async fn main(spawner: Spawner) {
             p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, p.DMA_CH0, p.DMA_CH1, spi_config,
         );
         // let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
-        static SPI_BUS: StaticCell<Spi0BusAsync> = StaticCell::new();
-        let spi_bus = SPI_BUS.init(mutex::Mutex::new(spi));
+        let spi_bus = SPI_BUS_DISPLAY.init(mutex::Mutex::new(spi));
 
         info!("Setting up OLED Display");
         let cs_disp = Output::new(p.PIN_7, Level::High);
@@ -93,6 +98,30 @@ async fn main(spawner: Spawner) {
             .connect(disp_interface)
     };
 
+    let mut sdcard = {
+        info!("Setting up SD Card");
+
+        let mut spi_config = spi::Config::default();
+        // TODO(aver): test max frequency
+        spi_config.frequency = 400_000;
+
+        // TODO(aver): fix pins
+        let spi = RefCell::new(Spi::new_blocking(
+            p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config,
+        ));
+
+        let spi_bus = SPI_BUS_SDCARD.init(blocking_mutex::Mutex::new(spi));
+
+        // Real cs pin
+        let cs = Output::new(p.PIN_13, Level::High);
+
+        // let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs);
+        let spi_dev = blocking::spi::SpiDevice::new(spi_bus, cs);
+
+        sd_card::SDCard::new(spi_dev)
+    };
+
+    debug!("Testing the display");
     // Do stuff with the display
     let mut reset = Output::new(p.PIN_8, Level::High);
 
@@ -115,22 +144,23 @@ async fn main(spawner: Spawner) {
 
     disp.flush().await.unwrap();
 
-    {
-        let mut spi_config = spi::Config::default();
-        // TODO(aver): test max frequency
-        spi_config.frequency = 400_000;
+    const FILE_NAME: &str = "test.txt";
+    debug!("Writing to SDCard");
+    // sdcard.write_file(FILE_NAME, "Hello From Rust!").unwrap();
+    // sdcard.write_file(FILE_NAME, "Hello From Rust 2!").unwrap();
 
-        let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config);
+    info!("Starting loop");
+    loop {
+        let content = sdcard.read_file(FILE_NAME).unwrap();
+        let str_content = String::from_utf8(content).unwrap();
+        info!("{}", str_content);
 
-        let spi_bus: blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, _> =
-            blocking_mutex::Mutex::new(RefCell::new(spi));
+        Text::with_baseline("Reading Text", Point::zero(), text_style, Baseline::Top)
+            .draw(&mut disp)
+            .unwrap();
+        disp.flush().await.unwrap();
 
-        // Real cs pin
-        let cs = Output::new(p.PIN_5, Level::High);
-
-        // let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs);
-        let spi_dev = blocking::spi::SpiDevice::new(&spi_bus, cs);
-        setup_sd_card(spi_dev);
+        Timer::after_secs(2).await;
     }
 }
 
