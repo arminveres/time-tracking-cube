@@ -15,13 +15,12 @@ use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
     i2c::{self, Async, I2c, InterruptHandler},
-    peripherals::{I2C1, SPI0},
+    peripherals::{I2C1, SPI0, SPI1},
     spi::{self, Spi},
 };
 use embassy_sync::blocking_mutex;
 use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
-use sd_card::setup_sd_card;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -40,8 +39,10 @@ bind_interrupts!(struct Irqs {
 const ADXL345_ADDR: u8 = 0x53;
 
 type Spi0BusAsync = mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
-// type Spi1Bus =
-//     blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static, SPI1, spi::Blocking>>;
+type Spi1Bus = blocking_mutex::Mutex<
+    blocking_mutex::raw::NoopRawMutex,
+    RefCell<Spi<'static, SPI1, spi::Blocking>>,
+>;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -115,22 +116,33 @@ async fn main(spawner: Spawner) {
 
     disp.flush().await.unwrap();
 
-    {
+    let mut sdcard = {
         let mut spi_config = spi::Config::default();
         // TODO(aver): test max frequency
         spi_config.frequency = 400_000;
 
-        let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config);
+        // TODO(aver): fix pins
+        let spi = RefCell::new(Spi::new_blocking(
+            p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config,
+        ));
 
-        let spi_bus: blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, _> =
-            blocking_mutex::Mutex::new(RefCell::new(spi));
+        static SPI_BUS: StaticCell<Spi1Bus> = StaticCell::new();
+        let spi_bus = SPI_BUS.init(blocking_mutex::Mutex::new(spi));
 
         // Real cs pin
         let cs = Output::new(p.PIN_5, Level::High);
 
         // let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs);
-        let spi_dev = blocking::spi::SpiDevice::new(&spi_bus, cs);
-        setup_sd_card(spi_dev);
+        let spi_dev = blocking::spi::SpiDevice::new(spi_bus, cs);
+
+        sd_card::SDCard::new(spi_dev)
+    };
+
+    sdcard
+        .write_file("test_file.txt", "Hello From Rust!")
+        .unwrap();
+    loop {
+        sdcard.read_file("test_file.txt").unwrap();
     }
 }
 
