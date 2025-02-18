@@ -22,7 +22,7 @@ use embassy_rp::{
 use embassy_sync::blocking_mutex;
 use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
-use heapless::{String, Vec};
+use heapless::String;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -56,21 +56,17 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
     {
-        let sda = p.PIN_14;
-        let scl = p.PIN_15;
-
         info!("Setting up i2c on pin 14 and 15");
         let i2c_conf = i2c::Config::default();
-        let i2c = i2c::I2c::new_async(p.I2C1, scl, sda, Irqs, i2c_conf);
+
+        let i2c = i2c::I2c::new_async(p.I2C1, p.PIN_15, p.PIN_14, Irqs, i2c_conf);
 
         let adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
             Ok(a) => a,
-            Err(err) => loop {
-                error!("Error: {}", Debug2Format(&err));
-                Timer::after_secs(10).await;
-            },
+            Err(err) => panic!("Error: {:?}", Debug2Format(&err)),
         };
-        // unwrap!(spawner.spawn(log_accel(adxl)));
+
+        unwrap!(spawner.spawn(log_accel(adxl)));
     }
 
     let disp = {
@@ -105,7 +101,6 @@ async fn main(spawner: Spawner) {
         // TODO(aver): test max frequency
         spi_config.frequency = 400_000;
 
-        // TODO(aver): fix pins
         let spi = RefCell::new(Spi::new_blocking(
             p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_config,
         ));
@@ -155,6 +150,7 @@ async fn main(spawner: Spawner) {
         let str_content = String::from_utf8(content).unwrap();
         info!("{}", str_content);
 
+        disp.clear();
         Text::with_baseline("Reading Text", Point::zero(), text_style, Baseline::Top)
             .draw(&mut disp)
             .unwrap();
@@ -166,14 +162,21 @@ async fn main(spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn log_accel(mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
+    // TODO(aver): Create an entry on the filesystem, probably as a CSV file
+    // - Will need to pass the sd card either fully to this task, or
+    // - ping-pong via SPSC channel / Mutex
     const TRESHOLD: u64 = 15; // Threshold in seconds on when to start a new timer.
+    info!("Running Acceleration Task");
 
     let mut time = embassy_time::Instant::now();
     let mut starting_side = time_tracking::Side::One;
-    info!("Running Acceleration Task");
 
+    debug!("Starting loop");
     loop {
-        let raw_accel = aclm.get_accel_raw().unwrap();
+        let raw_accel = aclm
+            .get_accel_raw()
+            .expect("Couldn't get acceleration data");
+
         let accel = time_tracking::Accel {
             x: raw_accel.0,
             y: raw_accel.1,
@@ -197,7 +200,6 @@ async fn log_accel(mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>
         time = embassy_time::Instant::now(); // reset time
 
         info!("New Entry: {}s on side {}", entry.duration, entry.side);
-        // TODO(aver): Create an entry on the filesystem
 
         Timer::after_secs(1).await;
     }
