@@ -7,7 +7,7 @@ doctest = false
 bench = false
 
 [package]
-edition = "2021"
+edition = "2024"
 name = "firmware"
 version = "0.1.0"
 authors = ["Armin Veres <armin.veres@hotmail.com>"]
