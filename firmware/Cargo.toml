@@ -75,7 +75,7 @@ log = "0.4"
 pio-proc = "0.2"
 pio = "0.2.1"
 rand = { version = "0.9.0", default-features = false }
-embedded-sdmmc = "0.8.1"
+embedded-sdmmc = "0.9.0"
 fugit = { version = "0.3.7", features = ["defmt"] }
 adxl345-eh-driver = "0.2.2"
 oled_async = { version = "0.2.0", features = [
