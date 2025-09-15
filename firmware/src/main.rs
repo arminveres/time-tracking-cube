@@ -6,9 +6,10 @@ mod sd_card;
 mod time_tracking;
 
 use core::cell::RefCell;
+use core::fmt::Write;
+use embassy_futures::join::join;
 
-use defmt::debug;
-use defmt::{error, info, unwrap, Debug2Format};
+use defmt::{Debug2Format, debug, info, unwrap};
 use embassy_embedded_hal::shared_bus::asynch;
 use embassy_embedded_hal::shared_bus::blocking;
 use embassy_executor::Spawner;
@@ -22,12 +23,14 @@ use embassy_rp::{
 use embassy_sync::blocking_mutex;
 use embassy_sync::mutex;
 use embassy_time::{Delay, Timer};
+use fugit::{HertzU32, RateExtU32};
 use heapless::String;
+use sd_card::SDCard;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
-    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    mono_font::{MonoTextStyleBuilder, ascii::FONT_6X10},
     pixelcolor::BinaryColor,
     prelude::*,
     text::{Baseline, Text},
@@ -44,7 +47,7 @@ type Spi0BusAsync = mutex::Mutex<blocking_mutex::raw::NoopRawMutex, Spi<'static,
 static SPI_BUS_DISPLAY: StaticCell<Spi0BusAsync> = StaticCell::new();
 
 type Spi1Bus = blocking_mutex::Mutex<
-    blocking_mutex::raw::NoopRawMutex,
+    blocking_mutex::raw::ThreadModeRawMutex,
     RefCell<Spi<'static, SPI1, spi::Blocking>>,
 >;
 static SPI_BUS_SDCARD: StaticCell<Spi1Bus> = StaticCell::new();
@@ -55,24 +58,23 @@ async fn main(spawner: Spawner) {
     embassy_rp::pac::SIO.spinlock(31).write_value(1);
     let p = embassy_rp::init(Default::default());
 
-    {
-        info!("Setting up i2c on pin 14 and 15");
+    let adxl = {
+        debug!("Setting up i2c on pin 14 and 15");
         let i2c_conf = i2c::Config::default();
 
         let i2c = i2c::I2c::new_async(p.I2C1, p.PIN_15, p.PIN_14, Irqs, i2c_conf);
 
-        let adxl = match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
+        match adxl345_eh_driver::Driver::new(i2c, Some(ADXL345_ADDR)) {
             Ok(a) => a,
             Err(err) => panic!("Error: {:?}", Debug2Format(&err)),
-        };
-
-        unwrap!(spawner.spawn(log_accel(adxl)));
-    }
+        }
+    };
 
     let disp = {
         // SPI clock needs to be running at <= 400kHz during initialization
         let mut spi_config = spi::Config::default();
-        spi_config.frequency = 400_000;
+        let val: HertzU32 = 400.kHz();
+        spi_config.frequency = val.to_Hz();
 
         // let spi = Spi::new_blocking(p.SPI0, p.PIN_2, p.PIN_3, p.PIN_4, spi_config);
         let spi = Spi::new(
@@ -95,7 +97,7 @@ async fn main(spawner: Spawner) {
     };
 
     let mut sdcard = {
-        info!("Setting up SD Card");
+        info!("SettinRateExtU32 SD Card");
 
         let mut spi_config = spi::Config::default();
         // TODO(aver): test max frequency
@@ -144,32 +146,30 @@ async fn main(spawner: Spawner) {
     // sdcard.write_file(FILE_NAME, "Hello From Rust!").unwrap();
     // sdcard.write_file(FILE_NAME, "Hello From Rust 2!").unwrap();
 
-    info!("Starting loop");
-    loop {
-        let content = sdcard.read_file(FILE_NAME).unwrap();
-        let str_content = String::from_utf8(content).unwrap();
-        info!("{}", str_content);
+    // unwrap!(spawner.spawn(log_accel(adxl)));
 
-        disp.clear();
-        Text::with_baseline("Reading Text", Point::zero(), text_style, Baseline::Top)
-            .draw(&mut disp)
-            .unwrap();
-        disp.flush().await.unwrap();
+    let log_handle = log_accel(adxl, sdcard);
+    let placeholder = placeholder();
 
-        Timer::after_secs(2).await;
-    }
+    join(log_handle, placeholder).await;
 }
 
-#[embassy_executor::task]
-async fn log_accel(mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>) -> ! {
+async fn log_accel<SPI>(
+    mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>,
+    mut sd_card: SDCard<SPI>,
+) where
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+{
     // TODO(aver): Create an entry on the filesystem, probably as a CSV file
     // - Will need to pass the sd card either fully to this task, or
     // - ping-pong via SPSC channel / Mutex
     const TRESHOLD: u64 = 15; // Threshold in seconds on when to start a new timer.
+    const FILENAME: &str = "entries.csv";
     info!("Running Acceleration Task");
 
     let mut time = embassy_time::Instant::now();
     let mut starting_side = time_tracking::Side::One;
+    let mut content: String<64> = String::new();
 
     debug!("Starting loop");
     loop {
@@ -196,11 +196,28 @@ async fn log_accel(mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>
         }
 
         let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
+        info!("logging new entry: side: {}, duration: {}", entry.side, entry.duration);
         starting_side = current_side;
         time = embassy_time::Instant::now(); // reset time
+
+        unwrap!(
+            write!(&mut content, "{},{}\n", entry.duration, entry.side),
+            "Writing entry to buffer failed"
+        );
+        unwrap!(
+            sd_card.write_file(FILENAME, content.as_str()),
+            "Could not write to file"
+        );
 
         info!("New Entry: {}s on side {}", entry.duration, entry.side);
 
         Timer::after_secs(1).await;
+    }
+}
+
+// TODO(aver): remove this or make it more useful
+async fn placeholder() -> ! {
+    loop {
+        Timer::after_secs(1000).await;
     }
 }

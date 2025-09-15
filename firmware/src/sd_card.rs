@@ -1,6 +1,7 @@
+use adxl345_eh_driver::Error;
 use heapless::Vec;
 
-use defmt::{debug, error, info, Debug2Format};
+use defmt::{Debug2Format, debug, error, info, warn};
 use embedded_sdmmc::{Mode, SdCard, SdCardError, TimeSource, VolumeIdx, VolumeManager};
 
 /// Max file size in bytes
@@ -10,6 +11,7 @@ const RET_BUF_SIZE: usize = 512;
 pub struct DummyTimesource();
 
 impl TimeSource for DummyTimesource {
+    // TODO(aver): 15-09-2025 Add a proper timesyncing mechanism
     fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
         embedded_sdmmc::Timestamp {
             year_since_1970: 0,
@@ -61,38 +63,73 @@ where
         file_name: &str,
         content: &str,
     ) -> Result<(), embedded_sdmmc::Error<embedded_sdmmc::SdCardError>> {
-        // we open volume 0, as we currently don't support complex file handling yet
-        let mut volume0 = match self.volume_mgr.open_volume(VolumeIdx(0)) {
-            Ok(vol) => vol,
-            Err(err) => panic!("{:?}", err),
-        };
-        debug!("Volume 0: {:?}", Debug2Format(&volume0));
+        const MAX_RETRIES: u8 = 3;
+        let mut last_status: Result<(), embedded_sdmmc::Error<embedded_sdmmc::SdCardError>> =
+            Ok(());
+        // TODO(aver): 15-09-2025 Consider rewriting this for proper error handling. Currently we
+        // give 3 tries before failing.
+        for retry_cnt in 0..MAX_RETRIES {
+            // we open volume 0, as we currently don't support complex file handling yet
+            let volume0 = match self.volume_mgr.open_volume(VolumeIdx(0)) {
+                Ok(vol) => vol,
+                Err(err) => {
+                    warn!(
+                        "Unable to open SDCard, resetting... {:?}",
+                        Debug2Format(&err)
+                    );
+                    if retry_cnt >= MAX_RETRIES {
+                        panic!("{:?}", err)
+                    } else {
+                        last_status = Err(err);
+                        continue;
+                    }
+                }
+            };
+            debug!("Volume 0: {:?}", Debug2Format(&volume0));
 
-        let mut root_dir = match volume0.open_root_dir() {
-            // Ok(root_dir) => RefCell::new(root_dir),
-            Ok(root_dir) => root_dir,
-            Err(err) => panic!("{:?}", err),
-        };
+            let root_dir = match volume0.open_root_dir() {
+                // Ok(root_dir) => RefCell::new(root_dir),
+                Ok(root_dir) => root_dir,
+                Err(err) => {
+                    if retry_cnt >= MAX_RETRIES {
+                        panic!("{:?}", err)
+                    } else {
+                        last_status = Err(err);
+                        continue;
+                    }
+                }
+            };
 
-        let mut file = match root_dir.open_file_in_dir(file_name, Mode::ReadWriteCreateOrAppend) {
-            Ok(file) => file,
-            Err(err) => panic!("{:?}", err),
-        };
+            let file = match root_dir.open_file_in_dir(file_name, Mode::ReadWriteCreateOrAppend) {
+                Ok(file) => file,
+                Err(err) => {
+                    if retry_cnt >= MAX_RETRIES {
+                        panic!("{:?}", err)
+                    } else {
+                        last_status = Err(err);
+                        continue;
+                    }
+                }
+            };
 
-        match file.write(content.as_bytes()) {
-            Ok(_) => {
-                info!("Writing to file {} was successfull!", file_name);
-                Ok(())
-            }
-            Err(err) => {
-                error!(
-                    "Caught error while writing to file: {:?}",
-                    Debug2Format(&err)
-                );
-                Err(err)
-            }
+            match file.write(content.as_bytes()) {
+                Ok(_) => {
+                    info!("Writing to file {} was successfull!", file_name);
+                    last_status = Ok(());
+                }
+                Err(err) => {
+                    error!(
+                        "Caught error while writing to file: {:?}",
+                        Debug2Format(&err)
+                    );
+                    last_status = Err(err);
+                }
+            };
         }
+        last_status // return the last known status
     }
+
+    #[allow(dead_code)]
     pub fn read_file(
         &mut self,
         file_name: &str,
@@ -124,7 +161,10 @@ where
             match file.read(&mut buf) {
                 Ok(no_bytes_read) => {
                     if no_bytes_read >= LOCAL_BUF_SIZE {
-                        error!("Bytes read larger than buffer size {}! Consider increasing local buffer!", no_bytes_read);
+                        error!(
+                            "Bytes read larger than buffer size {}! Consider increasing local buffer!",
+                            no_bytes_read
+                        );
                         return Err(embedded_sdmmc::Error::Unsupported);
                     }
                     if let Err(err) = ret_buf.extend_from_slice(&buf[..no_bytes_read]) {

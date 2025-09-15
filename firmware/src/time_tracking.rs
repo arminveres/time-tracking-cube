@@ -47,6 +47,7 @@ pub enum Side {
 //     pub fn gen_entry() {}
 // }
 
+// TODO(aver): add timestamp, not just duration
 pub struct Entry {
     pub side: u8,
     pub duration: u64,
