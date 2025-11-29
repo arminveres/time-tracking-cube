@@ -21,11 +21,12 @@
           packages = with pkgs; [
             gcc-arm-embedded
             minicom
-            mold-wrapped
-            probe-rs
+            mold
+            probe-rs-tools
             gdb
             pkg-config
             sccache
+            rust-analyzer
           ];
           shellHook = "";
         };
