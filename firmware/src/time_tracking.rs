@@ -48,6 +48,7 @@ pub enum Side {
 // }
 
 // TODO(aver): add timestamp, not just duration
+#[derive(Clone, Copy)]
 pub struct Entry {
     pub side: u8,
     pub duration: u64,
