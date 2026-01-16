@@ -53,7 +53,7 @@ type Spi1Bus = blocking_mutex::Mutex<
 static SPI_BUS_SDCARD: StaticCell<Spi1Bus> = StaticCell::new();
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     info!("Starting main!");
     embassy_rp::pac::SIO.spinlock(31).write_value(1);
     let p = embassy_rp::init(Default::default());
@@ -96,7 +96,7 @@ async fn main(spawner: Spawner) {
             .connect(disp_interface)
     };
 
-    let mut sdcard = {
+    let sdcard = {
         info!("SettinRateExtU32 SD Card");
 
         let mut spi_config = spi::Config::default();
@@ -141,7 +141,7 @@ async fn main(spawner: Spawner) {
 
     disp.flush().await.unwrap();
 
-    const FILE_NAME: &str = "test.txt";
+    // const FILE_NAME: &str = "test.txt";
     debug!("Writing to SDCard");
     // sdcard.write_file(FILE_NAME, "Hello From Rust!").unwrap();
     // sdcard.write_file(FILE_NAME, "Hello From Rust 2!").unwrap();
