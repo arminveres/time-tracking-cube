@@ -147,7 +147,8 @@ async fn display_task(mut disp: DisplayType) -> ! {
             .unwrap();
 
         buf.clear();
-        write!(&mut buf, "Time: {}s", entry.duration).ok();
+        let (h, m, s) = (entry.duration / 3600, (entry.duration % 3600) / 60, entry.duration % 60);
+        write!(&mut buf, "Time: {:02}:{:02}:{:02}", h, m, s).ok();
         Text::with_baseline(&buf, Point::new(0, 12), text_style, Baseline::Top)
             .draw(&mut disp)
             .unwrap();
