@@ -163,7 +163,7 @@ async fn log_accel<SPI>(
 where
     SPI: embedded_hal::spi::SpiDevice<u8>,
 {
-    const TRESHOLD: u64 = 15;
+    const TRESHOLD_IN_SECONDS: u64 = 5;
     const FILENAME: &str = "entries.csv";
     info!("Running Acceleration Task");
 
@@ -184,7 +184,7 @@ where
         };
         let current_side = accel.get_side();
 
-        if current_side != starting_side && time.elapsed().as_secs() >= TRESHOLD {
+        if current_side != starting_side && time.elapsed().as_secs() >= TRESHOLD_IN_SECONDS {
             let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
             info!(
                 "logging new entry: side: {}, duration: {}",
