@@ -8,7 +8,10 @@ use embassy_rp::{
 };
 use embassy_sync::blocking_mutex;
 use embedded_graphics::{
-    mono_font::{MonoTextStyleBuilder, ascii::FONT_6X10},
+    mono_font::{
+        MonoTextStyleBuilder,
+        ascii::{FONT_6X13, FONT_6X13_ITALIC},
+    },
     pixelcolor::BinaryColor,
     prelude::*,
     text::{Baseline, Text},
@@ -27,7 +30,11 @@ pub type DisplayType = GraphicsMode<oled_async::displays::sh1107::Sh1107_64_128,
 
 pub async fn display_task(mut disp: DisplayType) -> ! {
     let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X10)
+        .font(&FONT_6X13)
+        .text_color(BinaryColor::On)
+        .build();
+    let italic_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X13_ITALIC)
         .text_color(BinaryColor::On)
         .build();
 
@@ -54,14 +61,14 @@ pub async fn display_task(mut disp: DisplayType) -> ! {
         if let Some(prev) = state.previous {
             buf.clear();
             write!(&mut buf, "Last: {}", prev.side).ok();
-            Text::with_baseline(&buf, Point::new(0, 28), text_style, Baseline::Top)
+            Text::with_baseline(&buf, Point::new(0, 28), italic_style, Baseline::Top)
                 .draw(&mut disp)
                 .unwrap();
 
             buf.clear();
             let (h, m, s) = secs_to_hms(prev.duration);
             write!(&mut buf, "{:02}:{:02}:{:02}", h, m, s).ok();
-            Text::with_baseline(&buf, Point::new(0, 40), text_style, Baseline::Top)
+            Text::with_baseline(&buf, Point::new(0, 42), italic_style, Baseline::Top)
                 .draw(&mut disp)
                 .unwrap();
         }
