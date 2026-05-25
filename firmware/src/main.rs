@@ -164,12 +164,31 @@ async fn log_accel<SPI>(
 where
     SPI: embedded_hal::spi::SpiDevice<u8>,
 {
-    const TRESHOLD_IN_SECONDS: u64 = 5;
+    // A side switch is only committed after the new side has been stable for
+    // CONFIRMATION_SECS, preventing accidental knocks from being logged.
+    const THRESHOLD_SECS: u64 = 5;
+    const CONFIRMATION_SECS: u64 = 3;
     const FILENAME: &str = "entries.csv";
     info!("Running Acceleration Task");
 
-    let mut time = embassy_time::Instant::now();
-    let mut starting_side = time_tracking::Side::One;
+    #[derive(Clone, Copy)]
+    enum State {
+        Active {
+            side: time_tracking::Side,
+            start: embassy_time::Instant,
+        },
+        Transitioning {
+            original_side: time_tracking::Side,
+            original_start: embassy_time::Instant,
+            candidate_side: time_tracking::Side,
+            candidate_start: embassy_time::Instant,
+        },
+    }
+
+    let mut state = State::Active {
+        side: time_tracking::Side::One,
+        start: embassy_time::Instant::now(),
+    };
     let mut content: String<64> = String::new();
 
     debug!("Starting loop");
@@ -185,28 +204,76 @@ where
         };
         let current_side = accel.get_side();
 
-        if current_side != starting_side && time.elapsed().as_secs() >= TRESHOLD_IN_SECONDS {
-            let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
-            info!(
-                "logging new entry: side: {}, duration: {}",
-                entry.side, entry.duration
-            );
-
-            unwrap!(
-                write!(&mut content, "{},{}\n", entry.duration, entry.side),
-                "Writing entry to buffer failed"
-            );
-            match sd_card.write_file(FILENAME, content.as_str()) {
-                Ok(_) => content.clear(),
-                Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
+        state = match state {
+            State::Active { side, start } => {
+                if current_side != side && start.elapsed().as_secs() >= THRESHOLD_SECS {
+                    State::Transitioning {
+                        original_side: side,
+                        original_start: start,
+                        candidate_side: current_side,
+                        candidate_start: embassy_time::Instant::now(),
+                    }
+                } else {
+                    State::Active { side, start }
+                }
             }
-            info!("New Entry: {}s on side {}", entry.duration, entry.side);
+            State::Transitioning {
+                original_side,
+                original_start,
+                candidate_side,
+                candidate_start,
+            } => {
+                if current_side == original_side {
+                    // Returned to original side — cancel transition, preserve original timer
+                    info!("Transition cancelled, back to side {}", original_side as u8);
+                    State::Active { side: original_side, start: original_start }
+                } else if current_side == candidate_side
+                    && candidate_start.elapsed().as_secs() >= CONFIRMATION_SECS
+                {
+                    // New side confirmed — log the completed entry and commit the switch
+                    let entry =
+                        time_tracking::Entry::new(original_side, original_start.elapsed().as_secs());
+                    info!(
+                        "logging new entry: side: {}, duration: {}",
+                        entry.side, entry.duration
+                    );
+                    unwrap!(
+                        write!(&mut content, "{},{}\n", entry.duration, entry.side),
+                        "Writing entry to buffer failed"
+                    );
+                    match sd_card.write_file(FILENAME, content.as_str()) {
+                        Ok(_) => content.clear(),
+                        Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
+                    }
+                    State::Active { side: candidate_side, start: candidate_start }
+                } else if current_side != candidate_side {
+                    // Yet another side — reset the candidate timer
+                    State::Transitioning {
+                        original_side,
+                        original_start,
+                        candidate_side: current_side,
+                        candidate_start: embassy_time::Instant::now(),
+                    }
+                } else {
+                    // Still on candidate, waiting for confirmation window
+                    State::Transitioning {
+                        original_side,
+                        original_start,
+                        candidate_side,
+                        candidate_start,
+                    }
+                }
+            }
+        };
 
-            starting_side = current_side;
-            time = embassy_time::Instant::now();
-        }
-
-        DISPLAY_SIGNAL.signal(time_tracking::Entry::new(starting_side, time.elapsed().as_secs()));
+        // During transition the display keeps showing the original side and its elapsed time
+        let (display_side, display_elapsed) = match state {
+            State::Active { side, start } => (side, start.elapsed().as_secs()),
+            State::Transitioning { original_side, original_start, .. } => {
+                (original_side, original_start.elapsed().as_secs())
+            }
+        };
+        DISPLAY_SIGNAL.signal(time_tracking::Entry::new(display_side, display_elapsed));
 
         Timer::after_secs(1).await;
     }
