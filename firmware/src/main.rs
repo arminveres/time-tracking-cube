@@ -3,38 +3,30 @@
 
 mod config;
 mod sd_card;
+mod tasks;
 mod time_tracking;
 
 use core::cell::RefCell;
-use core::fmt::Write;
 
-use defmt::{Debug2Format, debug, error, info, unwrap};
+use defmt::{Debug2Format, debug, info};
 use embassy_embedded_hal::shared_bus::{asynch, blocking};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_rp::{
     bind_interrupts,
     gpio::{Level, Output},
-    i2c::{self, Async, I2c, InterruptHandler},
+    i2c::{self, InterruptHandler},
     peripherals::{I2C1, SPI0, SPI1},
     spi::{self, Spi},
 };
-use embassy_sync::{
-    blocking_mutex, blocking_mutex::raw::CriticalSectionRawMutex, mutex, signal::Signal,
-};
-use embassy_time::{Delay, Timer};
+use embassy_sync::{blocking_mutex, mutex};
+use embassy_time::Delay;
 use fugit::{HertzU32, RateExtU32};
-use heapless::String;
 use sd_card::SDCard;
 use static_cell::StaticCell;
+use tasks::display::DisplayType;
 use {defmt_rtt as _, panic_probe as _};
 
-use embedded_graphics::{
-    mono_font::{MonoTextStyleBuilder, ascii::FONT_6X10},
-    pixelcolor::BinaryColor,
-    prelude::*,
-    text::{Baseline, Text},
-};
 use oled_async::prelude::*;
 
 bind_interrupts!(struct Irqs {
@@ -51,19 +43,6 @@ type Spi1Bus = blocking_mutex::Mutex<
     RefCell<Spi<'static, SPI1, spi::Blocking>>,
 >;
 static SPI_BUS_SDCARD: StaticCell<Spi1Bus> = StaticCell::new();
-
-// asynch SpiDevice<'d, M, BUS, CS> holds &Mutex<M, BUS> directly
-type DisplaySpiDev = asynch::spi::SpiDevice<
-    'static,
-    blocking_mutex::raw::NoopRawMutex,
-    Spi<'static, SPI0, spi::Async>,
-    Output<'static>,
->;
-type DisplayIface = display_interface_spi::SPIInterface<DisplaySpiDev, Output<'static>>;
-// GraphicsMode<DV, DI>: DV = DisplayVariant, DI = AsyncWriteOnlyDataCommand
-type DisplayType = GraphicsMode<oled_async::displays::sh1107::Sh1107_64_128, DisplayIface>;
-
-static DISPLAY_SIGNAL: Signal<CriticalSectionRawMutex, time_tracking::Entry> = Signal::new();
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -127,154 +106,9 @@ async fn main(_spawner: Spawner) {
     disp.clear();
     disp.flush().await.unwrap();
 
-    join(display_task(disp), log_accel(adxl, sdcard)).await;
-}
-
-async fn display_task(mut disp: DisplayType) -> ! {
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X10)
-        .text_color(BinaryColor::On)
-        .build();
-
-    loop {
-        let entry = DISPLAY_SIGNAL.wait().await;
-        disp.clear();
-
-        let mut buf: String<32> = String::new();
-        write!(&mut buf, "Side: {}", entry.side).ok();
-        Text::with_baseline(&buf, Point::zero(), text_style, Baseline::Top)
-            .draw(&mut disp)
-            .unwrap();
-
-        buf.clear();
-        let (h, m, s) = (entry.duration / 3600, (entry.duration % 3600) / 60, entry.duration % 60);
-        write!(&mut buf, "Time: {:02}:{:02}:{:02}", h, m, s).ok();
-        Text::with_baseline(&buf, Point::new(0, 12), text_style, Baseline::Top)
-            .draw(&mut disp)
-            .unwrap();
-
-        disp.flush().await.unwrap();
-    }
-}
-
-async fn log_accel<SPI>(
-    mut aclm: adxl345_eh_driver::Driver<I2c<'static, I2C1, Async>>,
-    mut sd_card: SDCard<SPI>,
-) -> !
-where
-    SPI: embedded_hal::spi::SpiDevice<u8>,
-{
-    // A side switch is only committed after the new side has been stable for
-    // CONFIRMATION_SECS, preventing accidental knocks from being logged.
-    const THRESHOLD_SECS: u64 = 5;
-    const CONFIRMATION_SECS: u64 = 3;
-    const FILENAME: &str = "entries.csv";
-    info!("Running Acceleration Task");
-
-    #[derive(Clone, Copy)]
-    enum State {
-        Active {
-            side: time_tracking::Side,
-            start: embassy_time::Instant,
-        },
-        Transitioning {
-            original_side: time_tracking::Side,
-            original_start: embassy_time::Instant,
-            candidate_side: time_tracking::Side,
-            candidate_start: embassy_time::Instant,
-        },
-    }
-
-    let mut state = State::Active {
-        side: time_tracking::Side::One,
-        start: embassy_time::Instant::now(),
-    };
-    let mut content: String<64> = String::new();
-
-    debug!("Starting loop");
-    loop {
-        let raw_accel = aclm
-            .get_accel_raw()
-            .expect("Couldn't get acceleration data");
-
-        let accel = time_tracking::Accel {
-            x: raw_accel.0,
-            y: raw_accel.1,
-            z: raw_accel.2,
-        };
-        let current_side = accel.get_side();
-
-        state = match state {
-            State::Active { side, start } => {
-                if current_side != side && start.elapsed().as_secs() >= THRESHOLD_SECS {
-                    State::Transitioning {
-                        original_side: side,
-                        original_start: start,
-                        candidate_side: current_side,
-                        candidate_start: embassy_time::Instant::now(),
-                    }
-                } else {
-                    State::Active { side, start }
-                }
-            }
-            State::Transitioning {
-                original_side,
-                original_start,
-                candidate_side,
-                candidate_start,
-            } => {
-                if current_side == original_side {
-                    // Returned to original side — cancel transition, preserve original timer
-                    info!("Transition cancelled, back to side {}", original_side as u8);
-                    State::Active { side: original_side, start: original_start }
-                } else if current_side == candidate_side
-                    && candidate_start.elapsed().as_secs() >= CONFIRMATION_SECS
-                {
-                    // New side confirmed — log the completed entry and commit the switch
-                    let entry =
-                        time_tracking::Entry::new(original_side, original_start.elapsed().as_secs());
-                    info!(
-                        "logging new entry: side: {}, duration: {}",
-                        entry.side, entry.duration
-                    );
-                    unwrap!(
-                        write!(&mut content, "{},{}\n", entry.duration, entry.side),
-                        "Writing entry to buffer failed"
-                    );
-                    match sd_card.write_file(FILENAME, content.as_str()) {
-                        Ok(_) => content.clear(),
-                        Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
-                    }
-                    State::Active { side: candidate_side, start: candidate_start }
-                } else if current_side != candidate_side {
-                    // Yet another side — reset the candidate timer
-                    State::Transitioning {
-                        original_side,
-                        original_start,
-                        candidate_side: current_side,
-                        candidate_start: embassy_time::Instant::now(),
-                    }
-                } else {
-                    // Still on candidate, waiting for confirmation window
-                    State::Transitioning {
-                        original_side,
-                        original_start,
-                        candidate_side,
-                        candidate_start,
-                    }
-                }
-            }
-        };
-
-        // During transition the display keeps showing the original side and its elapsed time
-        let (display_side, display_elapsed) = match state {
-            State::Active { side, start } => (side, start.elapsed().as_secs()),
-            State::Transitioning { original_side, original_start, .. } => {
-                (original_side, original_start.elapsed().as_secs())
-            }
-        };
-        DISPLAY_SIGNAL.signal(time_tracking::Entry::new(display_side, display_elapsed));
-
-        Timer::after_secs(1).await;
-    }
+    join(
+        tasks::display::display_task(disp),
+        tasks::accel::log_accel(adxl, sdcard),
+    )
+    .await;
 }
