@@ -32,26 +32,44 @@ pub async fn display_task(mut disp: DisplayType) -> ! {
         .build();
 
     loop {
-        let entry = super::DISPLAY_SIGNAL.wait().await;
+        let state = super::DISPLAY_SIGNAL.wait().await;
         disp.clear();
 
         let mut buf: String<32> = String::new();
-        write!(&mut buf, "Side: {}", entry.side).ok();
+
+        // Current side
+        write!(&mut buf, "Side: {}", state.current.side).ok();
         Text::with_baseline(&buf, Point::zero(), text_style, Baseline::Top)
             .draw(&mut disp)
             .unwrap();
 
         buf.clear();
-        let (h, m, s) = (
-            entry.duration / 3600,
-            (entry.duration % 3600) / 60,
-            entry.duration % 60,
-        );
-        write!(&mut buf, "Time: {:02}:{:02}:{:02}", h, m, s).ok();
+        let (h, m, s) = secs_to_hms(state.current.duration);
+        write!(&mut buf, "{:02}:{:02}:{:02}", h, m, s).ok();
         Text::with_baseline(&buf, Point::new(0, 12), text_style, Baseline::Top)
             .draw(&mut disp)
             .unwrap();
 
+        // Previous side (shown below once at least one transition has occurred)
+        if let Some(prev) = state.previous {
+            buf.clear();
+            write!(&mut buf, "Last: {}", prev.side).ok();
+            Text::with_baseline(&buf, Point::new(0, 28), text_style, Baseline::Top)
+                .draw(&mut disp)
+                .unwrap();
+
+            buf.clear();
+            let (h, m, s) = secs_to_hms(prev.duration);
+            write!(&mut buf, "{:02}:{:02}:{:02}", h, m, s).ok();
+            Text::with_baseline(&buf, Point::new(0, 40), text_style, Baseline::Top)
+                .draw(&mut disp)
+                .unwrap();
+        }
+
         disp.flush().await.unwrap();
     }
+}
+
+fn secs_to_hms(secs: u64) -> (u64, u64, u64) {
+    (secs / 3600, (secs % 3600) / 60, secs % 60)
 }
