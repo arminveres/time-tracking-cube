@@ -115,7 +115,7 @@ where
             match file.write(content.as_bytes()) {
                 Ok(_) => {
                     info!("Writing to file {} was successfull!", file_name);
-                    last_status = Ok(());
+                    return Ok(());
                 }
                 Err(err) => {
                     error!(
@@ -126,7 +126,8 @@ where
                 }
             };
         }
-        last_status // return the last known status
+
+        last_status
     }
 
     #[allow(dead_code)]

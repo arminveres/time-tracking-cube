@@ -197,7 +197,7 @@ where
                 "Writing entry to buffer failed"
             );
             match sd_card.write_file(FILENAME, content.as_str()) {
-                Ok(_) => (),
+                Ok(_) => content.clear(),
                 Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
             }
             info!("New Entry: {}s on side {}", entry.duration, entry.side);
