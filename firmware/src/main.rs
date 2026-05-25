@@ -63,14 +63,6 @@ type DisplayIface = display_interface_spi::SPIInterface<DisplaySpiDev, Output<'s
 // GraphicsMode<DV, DI>: DV = DisplayVariant, DI = AsyncWriteOnlyDataCommand
 type DisplayType = GraphicsMode<oled_async::displays::sh1107::Sh1107_64_128, DisplayIface>;
 
-// blocking SpiDevice<'d, M, BUS, CS> holds &Mutex<M, RefCell<BUS>> internally
-type SdCardSpiDev = blocking::spi::SpiDevice<
-    'static,
-    blocking_mutex::raw::ThreadModeRawMutex,
-    Spi<'static, SPI1, spi::Blocking>,
-    Output<'static>,
->;
-
 static DISPLAY_SIGNAL: Signal<CriticalSectionRawMutex, time_tracking::Entry> = Signal::new();
 
 #[embassy_executor::main]
@@ -192,34 +184,28 @@ where
         };
         let current_side = accel.get_side();
 
-        if current_side == starting_side {
-            continue;
-        }
-        if time.elapsed().as_secs() < TRESHOLD {
-            continue;
-        }
+        if current_side != starting_side && time.elapsed().as_secs() >= TRESHOLD {
+            let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
+            info!(
+                "logging new entry: side: {}, duration: {}",
+                entry.side, entry.duration
+            );
 
-        let entry = time_tracking::Entry::new(starting_side, time.elapsed().as_secs());
-        info!(
-            "logging new entry: side: {}, duration: {}",
-            entry.side, entry.duration
-        );
-        starting_side = current_side;
-        time = embassy_time::Instant::now();
+            unwrap!(
+                write!(&mut content, "{},{}\n", entry.duration, entry.side),
+                "Writing entry to buffer failed"
+            );
+            match sd_card.write_file(FILENAME, content.as_str()) {
+                Ok(_) => (),
+                Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
+            }
+            info!("New Entry: {}s on side {}", entry.duration, entry.side);
 
-        DISPLAY_SIGNAL.signal(entry);
-
-        unwrap!(
-            write!(&mut content, "{},{}\n", entry.duration, entry.side),
-            "Writing entry to buffer failed"
-        );
-
-        match sd_card.write_file(FILENAME, content.as_str()) {
-            Ok(_) => (),
-            Err(e) => error!("Could not write to file: {:?}", Debug2Format(&e)),
+            starting_side = current_side;
+            time = embassy_time::Instant::now();
         }
 
-        info!("New Entry: {}s on side {}", entry.duration, entry.side);
+        DISPLAY_SIGNAL.signal(time_tracking::Entry::new(starting_side, time.elapsed().as_secs()));
 
         Timer::after_secs(1).await;
     }
