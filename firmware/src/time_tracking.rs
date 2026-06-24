@@ -1,5 +1,6 @@
-use defmt::panic;
+use defmt::{Format, error};
 
+#[derive(Format)]
 pub struct Accel {
     pub x: i16,
     pub y: i16,
@@ -23,7 +24,9 @@ impl Accel {
         } else if self.x < (-TRESHOLD) {
             Side::Six
         } else {
-            panic!("Unknown Side values")
+            // TODO: reconsider how default side is set.
+            error!("Unknown Side values {}; defaulting to base", &self);
+            Side::One
         }
     }
 }
@@ -47,6 +50,8 @@ pub enum Side {
 //     pub fn gen_entry() {}
 // }
 
+// TODO(aver): add timestamp, not just duration
+#[derive(Clone, Copy)]
 pub struct Entry {
     pub side: u8,
     pub duration: u64,
